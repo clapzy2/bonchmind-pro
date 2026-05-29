@@ -429,6 +429,13 @@ def build_gui():
 # Запуск приложения
 
 if __name__ == "__main__":
+    config_errors = config.validate_config()
+    if config_errors:
+        print("Ошибки конфигурации:")
+        for err in config_errors:
+            print(f" - {err}")
+        sys.exit(1)
+
     for d in [config.DOCS_DIR, config.DATA_DIR]:
         os.makedirs(d, exist_ok=True)
 

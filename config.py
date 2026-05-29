@@ -15,16 +15,16 @@ DATA_DIR   = os.path.join(BASE_DIR, "data")
 CHROMA_DIR = os.path.join(DATA_DIR, "chromadb")
 
 # Режим работы LLM: "api" (облако) или "ollama" (локально)
-LLM_MODE = "api"
+LLM_MODE = os.getenv("LLM_MODE", "api")
 
 # Настройки API (OpenRouter)
 API_URL   = "https://openrouter.ai/api/v1/chat/completions"
 API_KEY  = os.getenv("API_KEY", "")
-API_MODEL = "qwen/qwen3-32b" # можно брать разные модельки
+API_MODEL = os.getenv("API_MODEL", "qwen/qwen3-32b")
 
 # Настройки Ollama (локальный режим)
 OLLAMA_URL   = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen3:8b"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
 
 # Параметры генерации
 LLM_MAX_TOKENS     = 2048
@@ -122,3 +122,21 @@ PROMPTS = {
 
 Варианты:""",
 }
+
+def validate_config():
+    """Проверяет базовые настройки проекта."""
+    errors = []
+
+    if LLM_MODE not in ["api", "ollama"]:
+        errors.append("LLM_MODE должен быть 'api' или 'ollama'.")
+
+    if LLM_MODE == "api" and not API_KEY:
+        errors.append("Для режима api необходимо указать API_KEY в .env.")
+
+    if CHUNK_OVERLAP >= CHUNK_SIZE:
+        errors.append("CHUNK_OVERLAP должен быть меньше CHUNK_SIZE.")
+
+    if RETRIEVAL_TOP_K < RERANK_TOP_K:
+        errors.append("RETRIEVAL_TOP_K должен быть больше или равен RERANK_TOP_K.")
+
+    return errors

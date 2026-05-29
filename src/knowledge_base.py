@@ -97,7 +97,7 @@ def load_file(path):
 
 
 # Определение разделов в тексте
-# Доработать!!!!
+# Эвристическое определение разделов документа
 def _detect_sections(text):
     """
     Разбивает текст на разделы по заголовкам.
@@ -359,7 +359,7 @@ class KnowledgeBase:
 
     # Поиск в ChromaDB
     def _build_where_filter(self, file_filter="all", section_filter=None):
-        """Строим фильтр для ChromaDB ((по файлу и/или разделу)"""
+        """Строим фильтр для ChromaDB (по файлу и/или разделу)."""
         conditions = []
         if file_filter and file_filter != "all":
             conditions.append({"source_file": file_filter})
@@ -398,8 +398,7 @@ class KnowledgeBase:
                     results.append((doc, meta, relevance))
         return results
 
-    # Доработать, посмотреть
-    # Реранкинг
+    # Переранжирование найденных кандидатов
     def _rerank_candidates(self, query, candidates):
         """Cross-encoder пересчитывает сходство, оставляет top-7"""
         self._ensure_reranker()

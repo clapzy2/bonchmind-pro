@@ -498,14 +498,19 @@ class KnowledgeBase:
         4. Сборка контекста для LLM
         """
         if self._col.count() == 0:
-            return "База пуста. Добавьте файлы и нажмите <<Индексировать>>."
+            return ""
 
         kw_filter = self._build_where_filter(file_filter, section_filter)
         queries = self._expand_query(query)
         cands = self._raw_search(queries, kw_filter)
 
         if not cands:
-            # Fallback: ищем без фильтров
+            # Если пользователь выбрал конкретный файл или раздел,
+            # не ищем по всей базе, чтобы не дать ответ из другого источника.
+            if file_filter != "all" or section_filter:
+                return ""
+
+            # Fallback: только для поиска по всей базе.
             q_e = self._embeddings.embed_query(query)
             fallback = dict(
                 query_embeddings=[q_e],

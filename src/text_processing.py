@@ -22,7 +22,7 @@ def detect_sections(text):
     header_patterns = [
         r'^\s{2,}[А-ЯЁA-Z][А-Яа-яёЁA-Za-z\s:–\\.,-]+\s*$',
         r'^\s*(Глава|Часть|Раздел|Chapter|Part|Section)\s+[\dIVXLCDMivxlcdm]+.*$',
-        r'^\s*[А-ЯЁA-Z\s:–\\-]{10,}\s*$',
+        r'^\s*[А-ЯЁA-Z0-9\s:–\\-]{5,}\s*$',
     ]
 
     sections = []
@@ -39,7 +39,7 @@ def detect_sections(text):
         is_header = False
 
         for pattern in header_patterns:
-            if re.match(pattern, line) and len(stripped) < 120:
+            if re.match(pattern, line, re.IGNORECASE) and len(stripped) < 120:
                 prev_empty = (i == 0) or (i > 0 and not lines[i - 1].strip())
                 next_empty = (i == len(lines) - 1) or (i < len(lines) - 1 and not lines[i + 1].strip())
 
@@ -66,6 +66,7 @@ def detect_sections(text):
     if len(sections) <= 1:
         return [("", text)]
 
+    print("SECTIONS:", sections)
     return sections
 
 

@@ -66,7 +66,6 @@ def detect_sections(text):
     if len(sections) <= 1:
         return [("", text)]
 
-    print("SECTIONS:", sections)
     return sections
 
 

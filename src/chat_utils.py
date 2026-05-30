@@ -46,7 +46,12 @@ def extract_content(msg):
 def is_greeting(text):
     """Определяет короткое приветствие."""
     lower = text.lower().strip()
-    return any(g in lower for g in GREETING_PHRASES) and len(text.split()) <= 5
+    words = lower.replace(",", " ").replace("!", " ").replace(".", " ").split()
+
+    if len(words) > 3:
+        return False
+
+    return any(word in GREETING_PHRASES for word in words)
 
 
 def is_refusal(text):

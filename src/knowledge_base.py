@@ -8,11 +8,11 @@ import gc
 import glob
 import hashlib
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import config
 from src.document_loader import load_file
 from src.text_processing import detect_sections, clean_sections, get_splitter
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config
 
 
 
@@ -59,7 +59,7 @@ class KnowledgeBase:
             self._log("Новая коллекция создана")
 
     def _ensure_reranker(self):
-        """Загружаем реранкер при первом использовании  (ленивая загрузка"""
+        """Загружаем реранкер при первом использовании (ленивая загрузка)."""
         if self._reranker_loaded:
             return
         self._reranker_loaded = True
@@ -170,8 +170,15 @@ class KnowledgeBase:
 
     def clear(self):
         """Удалить всю коллекцию и создать новую."""
-        self._client.delete_collection(config.COLLECTION_NAME)
-        self._col = self._client.create_collection(name=config.COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
+        try:
+            self._client.delete_collection(config.COLLECTION_NAME)
+        except Exception:
+            pass
+
+        self._col = self._client.create_collection(
+            name=config.COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"}
+        )
         gc.collect()
         return "✅ База очищена"
 

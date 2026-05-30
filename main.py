@@ -9,6 +9,15 @@ import os
 import sys
 import gc
 
+from src.chat_utils import (
+    is_greeting,
+    is_refusal,
+    is_correction,
+    is_followup,
+    history_to_context,
+    get_last_qa,
+)
+
 # Подавляем предупреждения от torch, HuggingFace и других библиотек
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
@@ -38,29 +47,6 @@ from src.knowledge_base import KnowledgeBase
 _llm = None
 _kb  = None
 
-# Списки ключевых слов для распознавания типа сообщения
-_REFUSAL = [
-    "нет информации", "не упоминается", "не содержит",
-    "не могу найти", "отсутствует", "нет данных",
-    "no information", "not mentioned",
-]
-
-_FOLLOWUPS = [
-    "точно", "уверен", "правда", "докажи", "обоснуй",
-    "подробнее", "аргументы", "аргумент", "объясни", "почему",
-    "зачем", "пример", "примеры", "поясни", "разъясни", "расскажи подробнее",
-    "как так", "серьёзно", "не понял", "уточни", "ещё", "что такое",
-    "а что", "а как", "а почему", "а зачем", "расскажи ещё",
-    "продолжи", "дальше",
-]
-
-_CORRECTIONS = [
-    "нет,", "неправильно", "неверно", "ошибка", "ты ошибся",
-    "правильный ответ", "на самом деле", "не так", "неточно",
-    "ты не прав", "это неправда", "некорректно", "нет это",
-    "ответ неверный", "ответ неправильный", "нет правильный",
-    "все-таки", "всё-таки", "однако нет", "а вот нет",
-]
 
 
 def _get_llm():
@@ -81,76 +67,10 @@ def _get_kb(log=None):
     return _kb
 
 
-# Вспомогательные функции
-def _is_refusal(text):
-    """Проверяет, сказала ли LLM 'нет информации'."""
-    lower = text.lower().strip()
-    if not lower:
-        return True
-    if len(lower) < 150:
-        return any(p in lower for p in _REFUSAL)
-    return any(p in lower[:100] for p in _REFUSAL)
-
-
-def _is_correction(text):
-    """Определяет, исправляет ли пользователь предыдущий ответ."""
-    lower = text.lower().strip()
-    if len(lower.split()) > 20: # Слишком длинное для исправления
-        return False
-    return any(lower.startswith(c) or f" {c} " in lower for c in _CORRECTIONS)
-
-
-def _is_followup(text):
-    """Определяет уточняющие вопросы (точно? подробнее?)."""
-    lower = text.lower().strip()
-    if len(lower.split()) <= 12: # Увеличили порог до 12 слов
-        return any(lower == f or lower.startswith(f) for f in _FOLLOWUPS)
-    return False
-
-
 def _gradio_chatbot_kwargs():
     """Параметры чат-бота в зависимости от версии Gradio."""
     major = gr.__version__.split(".")[0]
     return {"type": "messages"} if major == "5" else {}
-
-
-def _extract_content(msg):
-    """Извлечь текст из сообщения (разные форматы Gradio)."""
-    content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
-    if isinstance(content, list):
-        content = " ".join(
-            item.get("text", "") if isinstance(item, dict) else str(item)
-            for item in content
-        )
-    return str(content).strip()
-
-
-def _history_to_context(history, n_last=4):
-    """Превращает историю чата в текст для контекста."""
-    if not history or len(history) < 2:
-        return ""
-    recent = history[-n_last * 2:] if len(history) > n_last * 2 else history
-    lines = []
-    for msg in recent:
-        role = "Пользователь" if msg.get("role") == "user" else "Ассистент"
-        content = _extract_content(msg)
-        if content:
-            lines.append(f"{role}: {content}")
-    return "\n".join(lines)
-
-
-def _get_last_qa(history):
-    """Извлекает последний вопрос и ответ из истории."""
-    last_answer, last_question = "", ""
-    for msg in reversed(history):
-        role = msg.get("role", "")
-        content = _extract_content(msg)
-        if role == "assistant" and not last_answer:
-            last_answer = content
-        elif role == "user" and not last_question:
-            last_question = content
-            break
-    return last_question, last_answer
 
 
 # Обработчики вкладки "Файлы"
@@ -248,7 +168,7 @@ def chat_respond(message, history, selected_file):
 
     # Приветствие, шаблон
     greetings = ["привет", "здравствуй", "добрый", "hi", "hello"]
-    if any(g in message.lower() for g in greetings) and len(message.split()) <= 5:
+    if is_greeting(message):
         yield history + [
             {"role": "user", "content": message},
             {"role": "assistant", "content": "Привет! Задайте вопрос по загруженным текстам."}
@@ -261,13 +181,13 @@ def chat_respond(message, history, selected_file):
         file_filter = "all" if selected_file == "Все файлы" else selected_file
 
         # Определяем тип сообщения: исправление или уточнение
-        is_corr = _is_correction(message)
-        is_fu = _is_followup(message)
+        is_corr = is_correction(message)
+        is_fu = is_followup(message)
         search_query = message
         prev_question, prev_answer = "", ""
 
         if is_corr or is_fu:
-            prev_question, prev_answer = _get_last_qa(history)
+            prev_question, prev_answer = get_last_qa(history)
             if prev_question:
                 search_query = prev_question
 
@@ -290,7 +210,7 @@ def chat_respond(message, history, selected_file):
                 prev_question=prev_question, prev_answer=prev_answer, correction=message,
             )
         else:
-            history_ctx = _history_to_context(history, n_last=3)
+            history_ctx = history_to_context(history, n_last=3)
             if history_ctx:
                 full_prompt = config.PROMPTS["qa"].format(
                     system=config.SYSTEM_PROMPT, topic=message,
@@ -313,7 +233,7 @@ def chat_respond(message, history, selected_file):
             yield new_history
 
         # Если LLM отказалась отвечать
-        if _is_refusal(answer):
+        if is_refusal(answer):
             new_history[-1]["content"] = "НЕТ ИНФОРМАЦИИ"
             yield new_history
 

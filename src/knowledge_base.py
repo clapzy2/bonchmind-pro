@@ -8,150 +8,11 @@ import gc
 import glob
 import hashlib
 import sys
-import zipfile
-import tempfile
-from typing import List, Tuple, Optional
+from src.document_loader import load_file
+from src.text_processing import detect_sections, clean_sections, get_splitter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
-
-
-# Функции загрузки файлов разных форматов
-def _load_txt(path):
-    """Прочитать текстовый файл (пробуем разные кодировки)."""
-    for enc in ["utf-8", "cp1251", "latin-1", "cp866"]:
-        try:
-            with open(path, "r", encoding=enc) as f:
-                return f.read()
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-    raise ValueError(f"Не удалось прочитать: {path}")
-
-def _load_pdf(path):
-    """Извлечь текст из PDF."""
-    from PyPDF2 import PdfReader
-    reader = PdfReader(path)
-    return "\n\n".join(p.extract_text() for p in reader.pages if p.extract_text())
-
-def _load_docx(path):
-    """текст из Word-документа."""
-    from docx import Document
-    doc = Document(path)
-    return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
-
-def _load_epub(path):
-    """Извлечь текст из EPUB. """
-    import ebooklib
-    from ebooklib import epub
-    from bs4 import BeautifulSoup
-    book = epub.read_epub(path)
-    parts = []
-    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-        soup = BeautifulSoup(item.get_content(), "html.parser")
-        text = soup.get_text(separator="\n")
-        if text.strip():
-            parts.append(text.strip())
-    return "\n\n".join(parts)
-
-def _load_fb2(path):
-    """Извлечь текст из FB2."""
-    from bs4 import BeautifulSoup
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        soup = BeautifulSoup(f.read(), "lxml-xml")
-    body = soup.find("body")
-    return body.get_text(separator="\n") if body else soup.get_text(separator="\n")
-
-def _load_fb2zip(path):
-    """Распаковать ZIP и извлечь текст из FB2 внутри ."""
-    with zipfile.ZipFile(path, "r") as zf:
-        fb2_files = [n for n in zf.namelist() if n.lower().endswith(".fb2")]
-        if not fb2_files:
-            raise ValueError(f"Нет .fb2 внутри архива: {path}")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            zf.extract(fb2_files[0], tmpdir)
-            return _load_fb2(os.path.join(tmpdir, fb2_files[0]))
-
-def _load_html(path):
-    """Извлечь текст из HTML."""
-    from bs4 import BeautifulSoup
-    text = _load_txt(path)
-    return BeautifulSoup(text, "html.parser").get_text(separator="\n")
-
-# Словарь: расширение файла, функция загрузки
-_LOADERS = {
-    ".pdf": _load_pdf, ".txt": _load_txt, ".md": _load_txt,
-    ".docx": _load_docx, ".epub": _load_epub, ".fb2": _load_fb2,
-    ".fb2.zip": _load_fb2zip, ".html": _load_html, ".htm": _load_html,
-}
-
-def load_file(path):
-    """Определить формат файла и извлечь текст."""
-    lower = path.lower()
-    if lower.endswith(".fb2.zip"):
-        return _load_fb2zip(path)
-    ext = os.path.splitext(path)[1].lower()
-    loader = _LOADERS.get(ext)
-    if not loader:
-        raise ValueError(f"Неподдерживаемый формат: {ext}")
-    return loader(path)
-
-
-# Определение разделов в тексте
-# Эвристическое определение разделов документа
-def _detect_sections(text):
-    """
-    Разбивает текст на разделы по заголовкам.
-    Заголовок определяется по паттернам: отступ, заглавные буквы,
-    окружение пустыми строками, длина < 120 символов.
-    Возвращает список пар: (название_раздела, текст_раздела)
-    """
-    lines = text.split("\n")
-    header_patterns = [
-        r'^\s{2,}[А-ЯЁA-Z][А-Яа-яёЁA-Za-z\s:–\\.,-]+\s*$',
-        r'^\s*(Глава|Часть|Раздел|Chapter|Part|Section)\s+[\dIVXLCDMivxlcdm]+.*$',
-        r'^\s*[А-ЯЁA-Z\s:–\\-]{10,}\s*$',
-    ]
-    sections = []
-    current_header = ""
-    current_lines = []
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped:
-            current_lines.append(line)
-            continue
-
-        # Проверяем, является ли строка заголовком
-        is_header = False
-        for pattern in header_patterns:
-            if re.match(pattern, line) and len(stripped) < 120:
-                prev_empty = (i == 0) or (i > 0 and not lines[i-1].strip())
-                next_empty = (i == len(lines)-1) or (i < len(lines)-1 and not lines[i+1].strip())
-                if prev_empty and next_empty:
-                    is_header = True
-                    break
-
-        if is_header:
-            # Сохраняем предыдущую секцию и начинаем новую
-            if current_lines:
-                body = "\n".join(current_lines).strip()
-                if body:
-                    sections.append((current_header, body))
-            current_header = stripped
-            current_lines = []
-        else:
-            current_lines.append(line)
-
-    # Сохраняем последнюю секцию
-    if current_lines:
-        body = "\n".join(current_lines).strip()
-        if body:
-            sections.append((current_header, body))
-
-    # Если заголовков не нашли - весь текст как одна секция
-    if len(sections) <= 1:
-        return [("", text)]
-    return sections
 
 
 
@@ -225,15 +86,6 @@ class KnowledgeBase:
         """Хеш текста для проверки дубликатов."""
         return hashlib.md5(text.strip().encode()).hexdigest()
 
-    def _get_splitter(self):
-        """Создаёт объект для разбивки текста на чанки."""
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-        return RecursiveCharacterTextSplitter(
-            chunk_size=config.CHUNK_SIZE,
-            chunk_overlap=config.CHUNK_OVERLAP,
-            separators=["\n\n\n", "\n\n", "\n", ". ", "; ", " ", ""],
-        )
-
     # Индексация файла
     def add_book(self, file_path):
         """Загрузить файл, разбить на чанки, добавить в ChromaDB"""
@@ -252,21 +104,15 @@ class KnowledgeBase:
             return f"Файл пуст: {filename}"
 
         # Определяем разделы ДО чистки текста
-        sections = _detect_sections(raw)
+        sections = detect_sections(raw)
         has_sections = len(sections) > 1
         if has_sections:
             names = [s[0] for s in sections if s[0]]
             self._log(f"Найдено {len(sections)} разделов: {', '.join(names[:5])}{'...' if len(names) > 5 else ''}")
 
-        # Чистим текст от лишних пробелов и переносов
-        cleaned = []
-        for name, body in sections:
-            body = re.sub(r'\n{3,}', '\n\n', body)
-            body = re.sub(r' {2,}', ' ', body)
-            cleaned.append((name, body))
-        sections = cleaned
+        sections = clean_sections(sections)
 
-        splitter = self._get_splitter()
+        splitter = get_splitter()
         existing_ids = set(self._col.get()["ids"]) if self._col.count() > 0 else set()
         new_chunks, new_ids, new_metas, seen = [], [], [], set()
 

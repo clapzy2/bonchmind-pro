@@ -195,7 +195,11 @@ def chat_respond(message, history, selected_file):
         section_filter = kb.find_section_in_query(message)
 
         # Ищем релевантные фрагменты (RAG-пайплайн)
-        context = kb.search(search_query, file_filter=file_filter, section_filter=section_filter)
+        context, sources = kb.search_with_sources(
+            search_query,
+            file_filter=file_filter,
+            section_filter=section_filter
+        )
         if not context:
             yield history + [
                 {"role": "user", "content": message},
@@ -235,6 +239,18 @@ def chat_respond(message, history, selected_file):
         # Если LLM отказалась отвечать
         if is_refusal(answer):
             new_history[-1]["content"] = "НЕТ ИНФОРМАЦИИ"
+            yield new_history
+            return
+
+        if sources:
+            source_lines = ["\n\n**Найденные источники:**"]
+            for i, src in enumerate(sources, start=1):
+                section = src["section"] or "без раздела"
+                source_lines.append(
+                    f"{i}. {src['source_file']} | {section} | score: {src['score']}"
+                )
+
+            new_history[-1]["content"] = answer + "\n".join(source_lines)
             yield new_history
 
     except Exception as e:

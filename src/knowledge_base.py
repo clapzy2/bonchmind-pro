@@ -340,29 +340,22 @@ class KnowledgeBase:
 
         return None
 
-    # Основной метод поиска (вызывается из чата)
-    def search(self, query, file_filter="all", section_filter=None):
+    def search_with_sources(self, query, file_filter="all", section_filter=None):
         """
-        Полный RAG-пайплайн:
-        1. HyDE - переформулировка запроса
-        2. Поиск в ChromaDB - top-20
-        3. Реранкинг - top-7
-        4. Сборка контекста для LLM
+        Возвращает контекст для LLM и список источников,
+        найденных RAG-пайплайном.
         """
         if self._col.count() == 0:
-            return ""
+            return "", []
 
         kw_filter = self._build_where_filter(file_filter, section_filter)
         queries = self._expand_query(query)
         cands = self._raw_search(queries, kw_filter)
 
         if not cands:
-            # Если пользователь выбрал конкретный файл или раздел,
-            # не ищем по всей базе, чтобы не дать ответ из другого источника.
             if file_filter != "all" or section_filter:
-                return ""
+                return "", []
 
-            # Fallback: только для поиска по всей базе.
             q_e = self._embeddings.embed_query(query)
             fallback = dict(
                 query_embeddings=[q_e],
@@ -370,12 +363,49 @@ class KnowledgeBase:
                 include=["documents", "metadatas", "distances"]
             )
             r = self._col.query(**fallback)
-            cands = [(d, m, max(0.0, 1.0 - dist))
-                     for d, m, dist in zip(r["documents"][0], r["metadatas"][0], r["distances"][0])]
+            cands = [
+                (d, m, max(0.0, 1.0 - dist))
+                for d, m, dist in zip(
+                    r["documents"][0],
+                    r["metadatas"][0],
+                    r["distances"][0]
+                )
+            ]
 
         if not cands:
-            return ""
-        return self._build_context(self._rerank_candidates(query, cands))
+            return "", []
+
+        ranked = self._rerank_candidates(query, cands)
+        context = self._build_context(ranked)
+
+        sources = []
+        seen = set()
+
+        for doc, meta, score in ranked:
+            source_file = meta.get("source_file", "?")
+            section = meta.get("section", "")
+            key = (source_file, section)
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            sources.append({
+                "source_file": source_file,
+                "section": section,
+                "score": round(float(score), 3),
+            })
+
+        return context, sources
+
+    def search(self, query, file_filter="all", section_filter=None):
+        """
+        Старый интерфейс поиска: возвращает только контекст.
+        Оставлен для совместимости.
+        """
+        context, _ = self.search_with_sources(query, file_filter, section_filter)
+        return context
 
     def get_available_files(self):
         """Список файлов в базе (для выпадающего списка)"""

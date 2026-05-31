@@ -157,7 +157,7 @@ def on_refresh_files():
 
 # Обработчик чата
 
-def chat_respond(message, history, selected_file):
+def chat_respond(message, history, selected_file, answer_mode):
     """
     Основной обработчик: получает вопрос, ищет фрагменты,
     генерирует ответ в режиме стриминга.
@@ -167,7 +167,6 @@ def chat_respond(message, history, selected_file):
         return
 
     # Приветствие, шаблон
-    greetings = ["привет", "здравствуй", "добрый", "hi", "hello"]
     if is_greeting(message):
         yield history + [
             {"role": "user", "content": message},
@@ -207,6 +206,13 @@ def chat_respond(message, history, selected_file):
             ]
             return
 
+        prompt_key = {
+            "Обычный": "qa",
+            "Кратко": "short_answer",
+            "Подробно": "detailed_answer",
+            "Только цитаты": "quotes_only",
+        }.get(answer_mode, "qa")
+
         # Выбираем промпт: обычный вопрос или исправление
         if is_corr and prev_question and prev_answer:
             full_prompt = config.PROMPTS["correction"].format(
@@ -216,12 +222,12 @@ def chat_respond(message, history, selected_file):
         else:
             history_ctx = history_to_context(history, n_last=3)
             if history_ctx:
-                full_prompt = config.PROMPTS["qa"].format(
+                full_prompt = config.PROMPTS[prompt_key].format(
                     system=config.SYSTEM_PROMPT, topic=message,
-                    context=f"ПРЕДЫДУЩИЙ ДИАЛог:\n{history_ctx}\n\nТЕКСТ ДОКУМЕНТА:\n{context}"
+                    context=f"ПРЕДЫДУЩИЙ ДИАЛОГ:\n{history_ctx}\n\nТЕКСТ ДОКУМЕНТА:\n{context}"
                 )
             else:
-                full_prompt = config.PROMPTS["qa"].format(
+                full_prompt = config.PROMPTS[prompt_key].format(
                     system=config.SYSTEM_PROMPT, topic=message, context=context
                 )
 
@@ -302,6 +308,13 @@ def build_gui():
                         choices=get_file_choices(), value="Все файлы",
                         label="📄 Искать в файле", scale=3, interactive=True,
                     )
+                    answer_mode = gr.Dropdown(
+                        choices=["Обычный", "Кратко", "Подробно", "Только цитаты"],
+                        value="Обычный",
+                        label="✍️ Тип ответа",
+                        scale=2,
+                        interactive=True,
+                    )
                     refresh_btn = gr.Button("🔄", scale=1, size="sm")
                 chatbot = gr.Chatbot(height=480, show_label=False, **chatbot_kwargs)
                 with gr.Row():
@@ -314,10 +327,10 @@ def build_gui():
 
                 refresh_btn.click(on_refresh_files, outputs=file_dropdown)
                 chat_btn.click(
-                    chat_respond, inputs=[chat_in, chatbot, file_dropdown], outputs=chatbot
+                    chat_respond, inputs=[chat_in, chatbot, file_dropdown, answer_mode], outputs=chatbot
                 ).then(lambda: "", outputs=chat_in)
                 chat_in.submit(
-                    chat_respond, inputs=[chat_in, chatbot, file_dropdown], outputs=chatbot
+                    chat_respond, inputs=[chat_in, chatbot, file_dropdown, answer_mode], outputs=chatbot
                 ).then(lambda: "", outputs=chat_in)
                 chat_clear.click(lambda: [], outputs=chatbot)
 

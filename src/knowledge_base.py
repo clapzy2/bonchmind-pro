@@ -384,7 +384,7 @@ class KnowledgeBase:
         for doc, meta, score in ranked:
             source_file = meta.get("source_file", "?")
             section = meta.get("section", "")
-            key = (source_file, section)
+            key = (source_file, section, doc[:80])
 
             if key in seen:
                 continue
@@ -395,6 +395,7 @@ class KnowledgeBase:
                 "source_file": source_file,
                 "section": section,
                 "score": round(float(score), 3),
+                "text": doc.strip(),
             })
 
         return context, sources

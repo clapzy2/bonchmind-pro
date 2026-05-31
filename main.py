@@ -8,6 +8,7 @@ warnings.filterwarnings("ignore")
 import os
 import sys
 import gc
+from src.export_utils import export_last_answer_to_docx
 
 from src.chat_utils import (
     is_greeting,
@@ -249,9 +250,9 @@ def chat_respond(message, history, selected_file, answer_mode):
             return
 
         if sources:
-            source_lines = ["\n\n**Найденные источники:**"]
+            source_lines = ["\n\n**Основные найденные источники:**"]
 
-            for i, src in enumerate(sources, start=1):
+            for i, src in enumerate(sources[:3], start=1):
                 section = src.get("section", "")
                 score = src.get("score", 0)
 
@@ -275,6 +276,15 @@ def chat_respond(message, history, selected_file, answer_mode):
             {"role": "assistant", "content": f"Ошибка: {e}"}
         ]
 
+
+def on_export_docx(history):
+    """Экспортировать последний ответ в DOCX."""
+    path = export_last_answer_to_docx(history)
+
+    if not path:
+        return None
+
+    return path
 
 # Построение веб-интерфейса
 
@@ -325,6 +335,9 @@ def build_gui():
                     chat_btn = gr.Button("Отправить", variant="primary", scale=1)
                 chat_clear = gr.Button("🗑️ Очистить историю", size="sm")
 
+                export_btn = gr.Button("📄 Экспорт ответа в DOCX", size="sm")
+                export_file = gr.File(label="Скачать DOCX", visible=True)
+
                 refresh_btn.click(on_refresh_files, outputs=file_dropdown)
                 chat_btn.click(
                     chat_respond, inputs=[chat_in, chatbot, file_dropdown, answer_mode], outputs=chatbot
@@ -333,6 +346,11 @@ def build_gui():
                     chat_respond, inputs=[chat_in, chatbot, file_dropdown, answer_mode], outputs=chatbot
                 ).then(lambda: "", outputs=chat_in)
                 chat_clear.click(lambda: [], outputs=chatbot)
+                export_btn.click(
+                    on_export_docx,
+                    inputs=chatbot,
+                    outputs=export_file
+                )
 
             # Вкладка "Файлы"
             with gr.TabItem("📖 Файлы"):

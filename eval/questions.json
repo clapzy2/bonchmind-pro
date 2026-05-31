@@ -1,0 +1,12 @@
+[
+  {
+    "question": "Когда происходило действие в рассказе?",
+    "expected_file": "The_Little_Match_Girl.txt",
+    "expected_section": ""
+  },
+  {
+    "question": "Цитаты из Речи Федра",
+    "expected_file": "pir.txt",
+    "expected_section": "Речь Федра"
+  }
+]

@@ -2,6 +2,8 @@
 export_utils.py - экспорт ответов BonchMind Pro в DOCX.
 """
 
+import re
+
 from datetime import datetime
 from pathlib import Path
 
@@ -10,6 +12,14 @@ from docx import Document
 
 EXPORT_DIR = Path("exports")
 
+
+def _clean_markdown(text):
+    """Убирает простую markdown-разметку для DOCX."""
+    text = str(text)
+    text = re.sub(r"^#{1,6}\s*", "", text)
+    text = text.replace("**", "")
+    text = text.replace("---", "")
+    return text.strip()
 
 def _message_to_text(content):
     """Преобразовать сообщение Gradio в обычный текст."""
@@ -51,6 +61,27 @@ def _extract_last_qa(history):
 
     return last_question, last_answer
 
+def export_text_to_docx(title, content, prefix="bonchmind_export"):
+    """Экспортирует произвольный текст в DOCX."""
+    if not content:
+        return None
+
+    EXPORT_DIR.mkdir(exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = EXPORT_DIR / f"{prefix}_{timestamp}.docx"
+
+    doc = Document()
+    doc.add_heading(title, level=1)
+    doc.add_paragraph(f"Дата экспорта: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+
+    for block in str(content).split("\n"):
+        block = _clean_markdown(block)
+        if block:
+            doc.add_paragraph(block)
+
+    doc.save(filename)
+    return str(filename)
 
 def export_last_answer_to_docx(history):
     """
@@ -77,7 +108,7 @@ def export_last_answer_to_docx(history):
 
     doc.add_heading("Ответ", level=2)
     for block in answer.split("\n"):
-        block = block.strip()
+        block = _clean_markdown(block)
         if block:
             doc.add_paragraph(block)
 

@@ -287,6 +287,26 @@ class KnowledgeBase:
             total += len(block)
         return "\n\n---\n\n".join(parts)
 
+    def get_sections_for_file(self, file_name):
+        """Получить список разделов конкретного файла."""
+        if self._col.count() == 0:
+            return []
+
+        data = self._col.get(
+            where={"source_file": file_name},
+            include=["metadatas"]
+        )
+
+        sections = set()
+
+        for meta in data.get("metadatas", []):
+            section = meta.get("section", "").strip()
+
+            if section:
+                sections.add(section)
+
+        return sorted(sections)
+
     # Распознавание раздела в запросе пользователя
     def get_available_sections(self):
         """Список всех разделов в базе"""
@@ -407,6 +427,33 @@ class KnowledgeBase:
         """
         context, _ = self.search_with_sources(query, file_filter, section_filter)
         return context
+
+    def get_file_chunks(self, file_filter="all"):
+        """Получить все чанки выбранного файла."""
+        if self._col.count() == 0:
+            return []
+
+        where = None
+        if file_filter and file_filter != "all":
+            where = {"source_file": file_filter}
+
+        data = self._col.get(
+            where=where,
+            include=["documents", "metadatas"]
+        ) if where else self._col.get(include=["documents", "metadatas"])
+
+        chunks = []
+
+        for doc, meta in zip(data.get("documents", []), data.get("metadatas", [])):
+            chunks.append({
+                "text": doc,
+                "source_file": meta.get("source_file", "?"),
+                "section": meta.get("section", ""),
+                "chunk_id": meta.get("chunk_id", 0),
+            })
+
+        chunks.sort(key=lambda x: (x["source_file"], x["chunk_id"]))
+        return chunks
 
     def get_available_files(self):
         """Список файлов в базе (для выпадающего списка)"""

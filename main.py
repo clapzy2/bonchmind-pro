@@ -8,7 +8,7 @@ warnings.filterwarnings("ignore")
 import os
 import sys
 import gc
-from src.export_utils import export_last_answer_to_docx
+from src.export_utils import export_last_answer_to_docx, export_text_to_docx
 
 from src.chat_utils import (
     is_greeting,
@@ -152,6 +152,36 @@ def get_file_choices():
         return ["Все файлы"]
 
 
+def on_file_change_for_summary(selected_file):
+    """Обновить список разделов после выбора файла."""
+    try:
+        if selected_file == "Все файлы":
+            return gr.Dropdown(
+                choices=["Все разделы"],
+                value="Все разделы"
+            )
+
+        sections = _get_kb().get_sections_for_file(selected_file)
+
+        return gr.Dropdown(
+            choices=["Все разделы"] + sections,
+            value="Все разделы"
+        )
+
+    except Exception:
+        return gr.Dropdown(
+            choices=["Все разделы"],
+            value="Все разделы"
+        )
+
+def on_refresh_sections():
+    """Обновить список разделов для вкладки конспекта."""
+    try:
+        sections = _get_kb().get_available_sections()
+        return gr.Dropdown(choices=["Все разделы"] + sections, value="Все разделы")
+    except Exception:
+        return gr.Dropdown(choices=["Все разделы"], value="Все разделы")
+
 def on_refresh_files():
     return gr.Dropdown(choices=get_file_choices(), value="Все файлы")
 
@@ -286,12 +316,78 @@ def on_export_docx(history):
 
     return path
 
+def on_export_summary_docx(summary_text):
+    """Экспортировать конспект в DOCX."""
+    if not summary_text or not str(summary_text).strip():
+        return None
+
+    return export_text_to_docx(
+        title="BonchMind Pro — конспект",
+        content=summary_text,
+        prefix="bonchmind_summary",
+    )
+
+def on_generate_summary(selected_file, selected_section, summary_type):
+    """Сгенерировать конспект по выбранному файлу через обработку чанков."""
+    try:
+        kb = _get_kb()
+        llm = _get_llm()
+
+        file_filter = "all" if selected_file == "Все файлы" else selected_file
+        chunks = kb.get_file_chunks(file_filter=file_filter)
+
+        if selected_section and selected_section != "Все разделы":
+            chunks = [
+                chunk for chunk in chunks
+                if chunk.get("section") == selected_section
+            ]
+
+        if not chunks:
+            return "НЕТ ИНФОРМАЦИИ - база пуста или файл не проиндексирован."
+
+        # Берём группы чанков, чтобы не перегружать модель.
+        group_size = 5
+        partial_summaries = []
+
+        for i in range(0, len(chunks), group_size):
+            group = chunks[i:i + group_size]
+
+            context_parts = []
+            for chunk in group:
+                section = chunk["section"]
+                label = f'{chunk["source_file"]} | {section}' if section else chunk["source_file"]
+                context_parts.append(f"[{label}]\n{chunk['text']}")
+
+            context = "\n\n---\n\n".join(context_parts)
+
+            prompt = config.PROMPTS["summary_chunk"].format(
+                system=config.SYSTEM_PROMPT,
+                context=context,
+            )
+
+            partial = llm.call(prompt, max_tokens=900)
+            if partial.strip():
+                partial_summaries.append(partial.strip())
+
+        combined_context = "\n\n---\n\n".join(partial_summaries)
+
+        final_prompt = config.PROMPTS["summary_reduce"].format(
+            system=config.SYSTEM_PROMPT,
+            context=combined_context,
+            summary_type=summary_type.lower(),
+        )
+
+        return llm.call(final_prompt, max_tokens=1800)
+
+    except Exception as e:
+        return f"Ошибка: {e}"
+
 # Построение веб-интерфейса
 
 def build_gui():
     chatbot_kwargs = _gradio_chatbot_kwargs()
 
-    with gr.Blocks(title="BonchMind", css="""
+    with gr.Blocks(title="BonchMind Pro", css="""
         footer {display: none !important;}
         .built-with {display: none !important;}
         .show-api {display: none !important;}
@@ -302,7 +398,7 @@ def build_gui():
 
         gr.HTML("""
         <div style="text-align:center;padding:16px 0 8px">
-            <h1 style="font-size:2em;font-weight:bold;">BonchMind</h1>
+            <h1 style="font-size:2em;font-weight:bold;">BonchMind Pro</h1>
             <p style="color:#888;font-size:1em;">
                 Умный ассистент по учебным текстам
             </p>
@@ -311,7 +407,7 @@ def build_gui():
         with gr.Tabs():
 
             # Вкладка "Чат"
-            with gr.TabItem("💬 Чат"):
+            with gr.TabItem("💬 Ассистент"):
                 gr.Markdown("### Вопросы по загруженным текстам")
                 with gr.Row():
                     file_dropdown = gr.Dropdown(
@@ -352,8 +448,68 @@ def build_gui():
                     outputs=export_file
                 )
 
+            # Вкладка "Конспект"
+            with gr.TabItem("📝 Конспект"):
+                gr.Markdown("### Генерация конспекта по учебным материалам")
+
+                with gr.Row():
+                    summary_file = gr.Dropdown(
+                        choices=get_file_choices(),
+                        value="Все файлы",
+                        label="📄 Материал",
+                        scale=3,
+                        interactive=True,
+                    )
+                    summary_refresh = gr.Button("🔄", scale=1, size="sm")
+
+                summary_section = gr.Dropdown(
+                    choices=["Все разделы"] + _get_kb().get_available_sections(),
+                    value="Все разделы",
+                    label="📑 Раздел",
+                    scale=3,
+                    interactive=True,
+                )
+
+                summary_file.change(
+                    on_file_change_for_summary,
+                    inputs=summary_file,
+                    outputs=summary_section,
+                )
+
+                summary_type = gr.Dropdown(
+                    choices=["Краткий", "Подробный"],
+                    value="Краткий",
+                    label="Тип конспекта",
+                    interactive=True,
+                )
+
+                summary_btn = gr.Button("📄 Сгенерировать конспект", variant="primary")
+                gr.Markdown("⚠️ Для больших документов генерация полного конспекта может занять несколько минут.")
+                summary_out = gr.Textbox(
+                    label="Конспект",
+                    lines=18,
+                )
+
+                with gr.Row():
+                    summary_export_btn = gr.Button("📄 Экспорт конспекта в DOCX", size="sm")
+                    summary_export_file = gr.File(label="Скачать конспект DOCX", visible=True)
+
+                summary_refresh.click(on_refresh_files, outputs=summary_file)
+                summary_refresh.click(on_refresh_sections, outputs=summary_section)
+                summary_btn.click(
+                    on_generate_summary,
+                    inputs=[summary_file, summary_section, summary_type],
+                    outputs=summary_out,
+                )
+
+                summary_export_btn.click(
+                    on_export_summary_docx,
+                    inputs=summary_out,
+                    outputs=summary_export_file,
+                )
+
             # Вкладка "Файлы"
-            with gr.TabItem("📖 Файлы"):
+            with gr.TabItem("📚 Материалы"):
                 gr.Markdown("### Управление базой знаний")
                 with gr.Row():
                     with gr.Column():
@@ -371,21 +527,29 @@ def build_gui():
                 book_clr_btn.click(on_clear_kb, None, book_out)
 
             # Вкладка "О системе"
-            with gr.TabItem("ℹ️ О системе"):
-                gr.Markdown("""### BonchMind
-Многопользовательская система для работы с учебными текстами.
+            with gr.TabItem("⚙️ Система"):
+                gr.Markdown("""### BonchMind Pro
 
-**Как пользоваться:**
-1. Перейдите во вкладку «📖 Файлы» и загрузите учебные материалы
-2. Нажмите «Загрузить и индексировать»
-3. Вернитесь в «💬 Чат»
-4. Выберите нужный файл в выпадающем списке «Искать в файле»
-5. Задавайте вопросы - бот ответит с цитатами из текста
+                AI-ассистент для работы с учебными материалами.
 
-**Поддерживаемые форматы:** PDF, TXT, EPUB, DOCX, Markdown, FB2, FB2.ZIP, HTML
+                **Основные возможности:**
+                1. Загрузка и индексация учебных документов.
+                2. Вопросы по материалам с опорой на найденные источники.
+                3. Разные режимы ответа: обычный, краткий, подробный и только цитаты.
+                4. Генерация кратких и подробных конспектов.
+                5. Экспорт ответов и конспектов в DOCX.
 
-**Языки текстов:** русский, английский и другие. Можно загрузить текст на английском и задавать вопросы на русском.
-""")
+                **Как пользоваться:**
+                1. Перейдите во вкладку «📚 Материалы» и загрузите учебные материалы.
+                2. Нажмите «Загрузить и индексировать».
+                3. Вернитесь во вкладку «💬 Ассистент».
+                4. Выберите нужный файл и тип ответа.
+                5. Задавайте вопросы по материалам.
+
+                **Поддерживаемые форматы:** PDF, TXT, EPUB, DOCX, Markdown, FB2, FB2.ZIP, HTML.
+
+                **Режимы LLM:** OpenRouter API или локальный запуск через Ollama.
+                """)
                 gr.Markdown("### Оформление")
                 theme_btn = gr.Button("🌙 Переключить тему (светлая / тёмная)", size="sm")
                 theme_btn.click(fn=None, js="""

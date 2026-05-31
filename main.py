@@ -244,11 +244,21 @@ def chat_respond(message, history, selected_file):
 
         if sources:
             source_lines = ["\n\n**Найденные источники:**"]
+
             for i, src in enumerate(sources, start=1):
-                section = src["section"] or "без раздела"
-                source_lines.append(
-                    f"{i}. {src['source_file']} | {section} | score: {src['score']}"
-                )
+                section = src.get("section", "")
+                score = src.get("score", 0)
+
+                if section:
+                    source_lines.append(
+                        f"{i}. {src['source_file']} → {section}\n"
+                        f"   Релевантность: {score}"
+                    )
+                else:
+                    source_lines.append(
+                        f"{i}. {src['source_file']}\n"
+                        f"   Релевантность: {score}"
+                    )
 
             new_history[-1]["content"] = answer + "\n".join(source_lines)
             yield new_history

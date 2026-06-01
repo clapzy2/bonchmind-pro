@@ -12,6 +12,12 @@ from docx import Document
 
 EXPORT_DIR = Path("exports")
 
+def make_safe_filename(text):
+    """Сделать строку безопасной для имени файла."""
+    text = str(text).strip().lower()
+    text = re.sub(r"[^\wа-яёА-ЯЁ]+", "_", text)
+    text = re.sub(r"_+", "_", text)
+    return text.strip("_")[:80] or "export"
 
 def _clean_markdown(text):
     """Убирает простую markdown-разметку для DOCX."""
@@ -61,7 +67,7 @@ def _extract_last_qa(history):
 
     return last_question, last_answer
 
-def export_text_to_docx(title, content, prefix="bonchmind_export"):
+def export_text_to_docx(title, content, prefix="bonchmind_export", name_parts=None):
     """Экспортирует произвольный текст в DOCX."""
     if not content:
         return None
@@ -69,16 +75,34 @@ def export_text_to_docx(title, content, prefix="bonchmind_export"):
     EXPORT_DIR.mkdir(exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = EXPORT_DIR / f"{prefix}_{timestamp}.docx"
+    name_suffix = ""
+    if name_parts:
+        safe_parts = [make_safe_filename(part) for part in name_parts if part]
+        if safe_parts:
+            name_suffix = "_" + "_".join(safe_parts)
+
+    filename = EXPORT_DIR / f"{prefix}{name_suffix}_{timestamp}.docx"
 
     doc = Document()
     doc.add_heading(title, level=1)
     doc.add_paragraph(f"Дата экспорта: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
 
-    for block in str(content).split("\n"):
-        block = _clean_markdown(block)
-        if block:
-            doc.add_paragraph(block)
+    for raw_block in str(content).split("\n"):
+        raw_block = raw_block.strip()
+        if not raw_block:
+            continue
+
+        # Markdown-заголовки превращаем в заголовки Word
+        if raw_block.startswith("### "):
+            doc.add_heading(_clean_markdown(raw_block), level=3)
+        elif raw_block.startswith("## "):
+            doc.add_heading(_clean_markdown(raw_block), level=2)
+        elif raw_block.startswith("# "):
+            doc.add_heading(_clean_markdown(raw_block), level=1)
+        else:
+            block = _clean_markdown(raw_block)
+            if block:
+                doc.add_paragraph(block)
 
     doc.save(filename)
     return str(filename)
@@ -107,10 +131,21 @@ def export_last_answer_to_docx(history):
     doc.add_paragraph(question)
 
     doc.add_heading("Ответ", level=2)
-    for block in answer.split("\n"):
-        block = _clean_markdown(block)
-        if block:
-            doc.add_paragraph(block)
+    for raw_block in answer.split("\n"):
+        raw_block = raw_block.strip()
+        if not raw_block:
+            continue
+
+        if raw_block.startswith("### "):
+            doc.add_heading(_clean_markdown(raw_block), level=3)
+        elif raw_block.startswith("## "):
+            doc.add_heading(_clean_markdown(raw_block), level=2)
+        elif raw_block.startswith("# "):
+            doc.add_heading(_clean_markdown(raw_block), level=1)
+        else:
+            block = _clean_markdown(raw_block)
+            if block:
+                doc.add_paragraph(block)
 
     doc.save(filename)
     return str(filename)

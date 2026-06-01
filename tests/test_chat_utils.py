@@ -24,6 +24,9 @@ def test_followup_detection():
     assert is_followup("подробнее")
     assert is_followup("почему")
     assert is_followup("а как это работает")
+    assert not is_followup("Что такое TCP?")
+    assert not is_followup("Что такое DNS?")
+    assert not is_followup("Что такое MAC-адрес?")
     assert not is_followup("Расскажи мне полностью содержание первой главы произведения")
 
 

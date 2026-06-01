@@ -224,6 +224,8 @@ class KnowledgeBase:
             return conditions[0]
         return {"$and": conditions}
 
+
+
     def _raw_search(self, queries, kw_filter=None):
         """Для каждого варианта запроса ищем top-20 в ChromaDB"""
         seen, results = set(), []

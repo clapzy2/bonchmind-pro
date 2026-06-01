@@ -174,6 +174,10 @@ def on_file_change_for_summary(selected_file):
             value="Все разделы"
         )
 
+def clear_summary_output():
+    """Очистить результат конспекта при изменении параметров."""
+    return "", None
+
 def on_refresh_sections():
     """Обновить список разделов для вкладки конспекта."""
     try:
@@ -275,7 +279,29 @@ def chat_respond(message, history, selected_file, answer_mode):
 
         # Если LLM отказалась отвечать
         if is_refusal(answer):
-            new_history[-1]["content"] = "НЕТ ИНФОРМАЦИИ"
+            refusal_text = "НЕТ ИНФОРМАЦИИ"
+
+            if sources:
+                source_lines = ["\n\n**Близкие найденные фрагменты:**"]
+
+                for i, src in enumerate(sources[:3], start=1):
+                    section = src.get("section", "")
+                    score = src.get("score", 0)
+
+                    if section:
+                        source_lines.append(
+                            f"{i}. {src['source_file']} → {section}\n"
+                            f"   Релевантность: {score}"
+                        )
+                    else:
+                        source_lines.append(
+                            f"{i}. {src['source_file']}\n"
+                            f"   Релевантность: {score}"
+                        )
+
+                refusal_text += "\n".join(source_lines)
+
+            new_history[-1]["content"] = refusal_text
             yield new_history
             return
 
@@ -316,7 +342,7 @@ def on_export_docx(history):
 
     return path
 
-def on_export_summary_docx(summary_text):
+def on_export_summary_docx(summary_text, selected_file, selected_section, summary_type):
     """Экспортировать конспект в DOCX."""
     if not summary_text or not str(summary_text).strip():
         return None
@@ -325,6 +351,7 @@ def on_export_summary_docx(summary_text):
         title="BonchMind Pro — конспект",
         content=summary_text,
         prefix="bonchmind_summary",
+        name_parts=[selected_file, selected_section, summary_type],
     )
 
 def on_generate_summary(selected_file, selected_section, summary_type):
@@ -377,7 +404,22 @@ def on_generate_summary(selected_file, selected_section, summary_type):
             summary_type=summary_type.lower(),
         )
 
-        return llm.call(final_prompt, max_tokens=1800)
+        summary = llm.call(final_prompt, max_tokens=1800)
+
+        file_label = "всем материалам" if selected_file == "Все файлы" else selected_file
+        section_label = (
+            "всем разделам"
+            if selected_section == "Все разделы"
+            else selected_section
+        )
+
+        header = (
+            f"Конспект по материалу: {file_label}\n"
+            f"Раздел: {section_label}\n"
+            f"Тип: {summary_type.lower()}\n\n"
+        )
+
+        return header + summary
 
     except Exception as e:
         return f"Ошибка: {e}"
@@ -477,8 +519,8 @@ def build_gui():
                 )
 
                 summary_type = gr.Dropdown(
-                    choices=["Краткий", "Подробный"],
-                    value="Краткий",
+                    choices=["Краткий", "Средний", "Подробный"],
+                    value="Средний",
                     label="Тип конспекта",
                     interactive=True,
                 )
@@ -496,6 +538,20 @@ def build_gui():
 
                 summary_refresh.click(on_refresh_files, outputs=summary_file)
                 summary_refresh.click(on_refresh_sections, outputs=summary_section)
+                summary_file.change(
+                    clear_summary_output,
+                    outputs=[summary_out, summary_export_file],
+                )
+
+                summary_section.change(
+                    clear_summary_output,
+                    outputs=[summary_out, summary_export_file],
+                )
+
+                summary_type.change(
+                    clear_summary_output,
+                    outputs=[summary_out, summary_export_file],
+                )
                 summary_btn.click(
                     on_generate_summary,
                     inputs=[summary_file, summary_section, summary_type],
@@ -504,7 +560,7 @@ def build_gui():
 
                 summary_export_btn.click(
                     on_export_summary_docx,
-                    inputs=summary_out,
+                    inputs=[summary_out, summary_file, summary_section, summary_type],
                     outputs=summary_export_file,
                 )
 

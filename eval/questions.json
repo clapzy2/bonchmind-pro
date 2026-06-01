@@ -1,12 +1,32 @@
 [
   {
-    "question": "Когда происходило действие в рассказе?",
-    "expected_file": "The_Little_Match_Girl.txt",
+    "question": "Что такое TCP?",
+    "expected_file": "Tanenbaum_Endryu_Kompyuternye_Seti_5-E_Izdanie.pdf",
     "expected_section": ""
   },
   {
-    "question": "Цитаты из Речи Федра",
-    "expected_file": "pir.txt",
-    "expected_section": "Речь Федра"
+    "question": "Что такое DNS?",
+    "expected_file": "Tanenbaum_Endryu_Kompyuternye_Seti_5-E_Izdanie.pdf",
+    "expected_section": ""
+  },
+  {
+    "question": "Что такое MAC-адрес?",
+    "expected_file": "Tanenbaum_Endryu_Kompyuternye_Seti_5-E_Izdanie.pdf",
+    "expected_section": ""
+  },
+  {
+    "question": "Что такое преобразование Лапласа?",
+    "expected_file": "Krasnov M.L. _Zadachi i reshenija - Operacionnoe ischislenie, 2003, 178s.pdf",
+    "expected_section": ""
+  },
+  {
+    "question": "Что такое оригинал и изображение?",
+    "expected_file": "Krasnov M.L. _Zadachi i reshenija - Operacionnoe ischislenie, 2003, 178s.pdf",
+    "expected_section": ""
+  },
+  {
+    "question": "Что такое теорема запаздывания?",
+    "expected_file": "Krasnov M.L. _Zadachi i reshenija - Operacionnoe ischislenie, 2003, 178s.pdf",
+    "expected_section": ""
   }
 ]

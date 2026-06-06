@@ -783,8 +783,8 @@ class KnowledgeBase:
         context, _ = self.search_with_sources(query, file_filter, section_filter)
         return context
 
-        def get_file_chunks(self, file_filter="all", section_filter=None):
-            """Получить чанки выбранного файла и, при необходимости, выбранного раздела."""
+    def get_file_chunks(self, file_filter="all", section_filter=None):
+        """Получить чанки выбранного файла и, при необходимости, выбранного раздела."""
         if self._col.count() == 0:
             return []
 
@@ -810,6 +810,19 @@ class KnowledgeBase:
 
         chunks.sort(key=lambda x: (x["source_file"], int(x["chunk_id"])))
         return chunks
+
+    def get_available_files(self):
+        """Список файлов в базе (для выпадающего списка)."""
+        if self._col.count() == 0:
+            return []
+
+        data = self._col.get(include=["metadatas"])
+
+        return sorted({
+            m.get("source_file", "")
+            for m in data["metadatas"]
+            if m and m.get("source_file")
+        })
 
     def get_available_files(self):
         """Список файлов в базе (для выпадающего списка)"""

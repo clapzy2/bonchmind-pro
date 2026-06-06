@@ -8,6 +8,7 @@ warnings.filterwarnings("ignore")
 import os
 import sys
 import gc
+import re
 from src.export_utils import export_last_answer_to_docx, export_text_to_docx
 
 from src.chat_utils import (
@@ -435,10 +436,10 @@ def _summary_generation_params(summary_type):
 
     if "крат" in summary_type:
         return {
-            "top_k": max(12, min(24, base_top_k // 2)),
+            "top_k": max(18, min(30, base_top_k)),
             "group_size": 6,
-            "chunk_tokens": 650,
-            "final_tokens": 1200,
+            "chunk_tokens": 700,
+            "final_tokens": 1800,
         }
 
     if "подроб" in summary_type:
@@ -565,6 +566,322 @@ def generate_selected_section_summary(
 
     return header + result
 
+def _clean_plan_line(line):
+    """Очищает строку плана от нумерации и мусора."""
+    line = str(line or "").strip()
+    line = re.sub(r"^\s*[\-\*\d\.\)\:]+\s*", "", line)
+    line = line.strip(" -—–•\t")
+    return line.strip()
+
+
+def build_topic_search_plan(llm, topic, summary_type, max_items=None):
+    """
+    Универсальный планировщик темы.
+
+    Не пишет конспект, а создаёт поисковые подпункты.
+    Работает для истории, сетей, математики, программирования и других дисциплин.
+    """
+    if max_items is None:
+        max_items = getattr(config, "PLANNED_SUMMARY_QUERIES", 7)
+
+    prompt = f"""{config.SYSTEM_PROMPT}
+
+ТЕМА ПОЛЬЗОВАТЕЛЯ:
+{topic}
+
+Задача:
+Разбей тему на {max_items} коротких поисковых подпунктов для поиска в учебных материалах.
+
+Важно:
+1. Не пиши конспект.
+2. Не добавляй факты от себя.
+3. Каждый подпункт должен быть коротким поисковым запросом.
+4. Подпункты должны покрывать тему с разных сторон.
+5. Если тема историческая — сохраняй хронологию.
+6. Если тема техническая — иди от основных понятий к деталям.
+7. Если тема математическая — выдели определения, свойства, формулы, методы и примеры.
+
+Формат:
+Каждый подпункт с новой строки.
+Без пояснений.
+
+ПОИСКОВЫЕ ПОДПУНКТЫ:"""
+
+    raw = llm.call(prompt, max_tokens=500)
+
+    lines = []
+    for line in raw.splitlines():
+        item = _clean_plan_line(line)
+        if not item:
+            continue
+        if len(item) < 4:
+            continue
+        if item.lower() in {"поисковые подпункты", "план", "ответ"}:
+            continue
+        lines.append(item)
+
+    # Убираем дубли, сохраняя порядок
+    unique = []
+    seen = set()
+
+    for item in lines:
+        key = item.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+
+    # Fallback, если модель дала плохой план
+    if not unique:
+        unique = [topic]
+
+    # Всегда добавляем исходную тему первым запросом
+    if topic.lower() not in {x.lower() for x in unique}:
+        unique.insert(0, topic)
+
+    return unique[:max_items]
+
+
+def _dedupe_chunks(chunks):
+    """Убирает дубли найденных чанков."""
+    unique = []
+    seen = set()
+
+    for chunk in chunks:
+        text = chunk.get("text", "").strip()
+        if not text:
+            continue
+
+        key = text[:500].lower()
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique.append(chunk)
+
+    return unique
+
+
+def _limit_chunks_per_section(chunks, max_per_section=None):
+    """
+    Не даёт одному разделу забить весь конспект.
+    Это важно для больших тем.
+    """
+    if max_per_section is None:
+        max_per_section = getattr(config, "PLANNED_SUMMARY_MAX_CHUNKS_PER_SECTION", 4)
+
+    result = []
+    section_counts = {}
+
+    for chunk in chunks:
+        section = chunk.get("section", "") or "Без раздела"
+        source_file = chunk.get("source_file", "")
+        key = (source_file, section)
+
+        count = section_counts.get(key, 0)
+
+        if count >= max_per_section:
+            continue
+
+        section_counts[key] = count + 1
+        result.append(chunk)
+
+    return result
+
+
+def _chunks_to_context(chunks):
+    """Собирает чанки в контекст для LLM."""
+    context_parts = []
+
+    for chunk in chunks:
+        section = chunk.get("section", "")
+        label = (
+            f'{chunk["source_file"]} | {section}'
+            if section
+            else chunk["source_file"]
+        )
+        context_parts.append(f"[{label}]\n{chunk['text']}")
+
+    return "\n\n---\n\n".join(context_parts)
+
+
+def retrieve_chunks_by_plan(kb, topic, plan, file_filter="all", section_filter=None):
+    """
+    Ищет чанки по нескольким подпунктам плана.
+    """
+    per_query = getattr(config, "PLANNED_SUMMARY_CHUNKS_PER_QUERY", 5)
+    max_chunks = getattr(config, "PLANNED_SUMMARY_MAX_CHUNKS", 40)
+
+    all_chunks = []
+
+    for item in plan:
+        query = f"{topic}. {item}"
+
+        chunks = kb.search_chunks_for_summary(
+            query=query,
+            file_filter=file_filter,
+            section_filter=section_filter,
+            top_k=per_query,
+        )
+
+        all_chunks.extend(chunks)
+
+    all_chunks = _dedupe_chunks(all_chunks)
+    all_chunks = _limit_chunks_per_section(all_chunks)
+
+    # Возвращаем в порядке документа, а не в порядке релевантности.
+    all_chunks.sort(
+        key=lambda x: (
+            x.get("source_file", ""),
+            int(x.get("chunk_id", 0)),
+        )
+    )
+
+    return all_chunks[:max_chunks]
+
+
+def generate_planned_topic_summary(
+    kb,
+    llm,
+    topic,
+    summary_type,
+    file_filter="all",
+    section_filter=None,
+):
+    """
+    Универсальный тематический конспект.
+
+    Подходит для широких тем:
+    - история России XX века;
+    - компьютерные сети;
+    - преобразование Лапласа;
+    - ООП;
+    - базы данных;
+    - медицина и т.д.
+
+    Вместо одного поиска:
+    тема → план → поиск по каждому пункту → сборка конспекта.
+    """
+    params = _summary_generation_params(summary_type)
+
+    plan = build_topic_search_plan(
+        llm=llm,
+        topic=topic,
+        summary_type=summary_type,
+        max_items=getattr(config, "PLANNED_SUMMARY_QUERIES", 7),
+    )
+
+    topic_chunks = retrieve_chunks_by_plan(
+        kb=kb,
+        topic=topic,
+        plan=plan,
+        file_filter=file_filter,
+        section_filter=section_filter,
+    )
+
+    if not topic_chunks:
+        return (
+            "Информация по указанной теме/периоду не найдена в выбранных материалах.\n\n"
+            "Попробуйте:\n"
+            "• выбрать другой файл;\n"
+            "• выбрать конкретный раздел;\n"
+            "• переформулировать тему."
+        )
+
+    group_size = params["group_size"]
+    partial_summaries = []
+
+    for i in range(0, len(topic_chunks), group_size):
+        group = topic_chunks[i:i + group_size]
+        context = _chunks_to_context(group)
+
+        prompt = f"""{config.SYSTEM_PROMPT}
+
+        ТЕМА:
+        {topic}
+
+        ФРАГМЕНТЫ УЧЕБНОГО МАТЕРИАЛА:
+        {context}
+
+        Задача:
+        Сделай промежуточный конспект по этим фрагментам в рамках указанной темы.
+
+        Важно:
+        1. Используй только данные из фрагментов.
+        2. Не добавляй факты от себя.
+        3. Если часть фрагментов слабо относится к теме, просто не используй её.
+        4. Не пиши "НЕ ОТНОСИТСЯ", если во фрагментах есть хотя бы немного полезной информации.
+        5. Пиши кратко, структурно, на русском языке.
+
+        ПРОМЕЖУТОЧНЫЙ КОНСПЕКТ:"""
+
+        partial = llm.call(
+            prompt,
+            max_tokens=params["chunk_tokens"],
+        ).strip()
+
+        if partial:
+            partial_summaries.append(partial)
+
+    if not partial_summaries:
+        return (
+            "Информация по указанной теме не найдена в выбранных материалах.\n\n"
+            "Попробуйте:\n"
+            "• выбрать конкретный раздел;\n"
+            "• выбрать другой файл;\n"
+            "• переформулировать тему."
+        )
+
+    combined_context = "\n\n---\n\n".join(partial_summaries)
+
+    final_prompt = f"""{config.SYSTEM_PROMPT}
+
+ТЕМА:
+{topic}
+
+ПОИСКОВЫЙ ПЛАН:
+{chr(10).join(f"- {item}" for item in plan)}
+
+ПРОМЕЖУТОЧНЫЕ КОНСПЕКТЫ:
+{combined_context}
+
+Задача:
+Составь {summary_type.lower()} итоговый тематический конспект.
+
+Инструкция:
+1. Используй только промежуточные конспекты.
+2. Сохрани структуру темы.
+3. Не добавляй факты от себя.
+4. Если какие-то пункты плана не раскрыты в найденных фрагментах, укажи это в конце.
+5. Для исторических тем сохраняй хронологический порядок.
+6. Для технических тем объясняй от общего к частному.
+7. Для математических тем выделяй определения, формулы, свойства и применение.
+8. В конце добавь короткий итог.
+
+ИТОГОВЫЙ КОНСПЕКТ:"""
+
+    result = llm.call(
+        final_prompt,
+        max_tokens=params["final_tokens"],
+    )
+
+    section_label = section_filter if section_filter else "Все разделы"
+
+    header = (
+        f"Тематический конспект\n"
+        f"Тема / период: {topic}\n"
+        f"Раздел: {section_label}\n"
+        f"Тип: {summary_type.lower()}\n"
+        f"Режим: плановый тематический конспект\n"
+        f"Пунктов плана: {len(plan)}\n"
+        f"Найдено фрагментов: {len(topic_chunks)}\n\n"
+        f"План поиска:\n"
+        + "\n".join(f"• {item}" for item in plan)
+        + "\n\n"
+    )
+
+    return header + result
+
 def generate_topic_summary(kb, llm, topic, summary_type, file_filter="all", section_filter=None):
     """
     Тематический конспект через semantic search + rerank.
@@ -680,8 +997,18 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
                 summary_type=summary_type,
             )
 
-        # Если раздел не выбран, но тема указана — используем тематический поиск.
+        # Если раздел не выбран, но тема указана — используем плановый тематический конспект.
         if topic:
+            if getattr(config, "PLANNED_SUMMARY_ENABLED", True):
+                return generate_planned_topic_summary(
+                    kb=kb,
+                    llm=llm,
+                    topic=topic,
+                    summary_type=summary_type,
+                    file_filter=file_filter,
+                    section_filter=None,
+                )
+
             return generate_topic_summary(
                 kb=kb,
                 llm=llm,

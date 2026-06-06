@@ -41,7 +41,6 @@ EMBEDDING_DEVICE = "cpu"
 # Реранкер
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 USE_RERANKER   = True
-RERANK_TOP_K   = 12
 
 # ChromaDB
 COLLECTION_NAME = "textbot_docs"
@@ -50,14 +49,18 @@ COLLECTION_NAME = "textbot_docs"
 CHUNK_SIZE    = 1200
 CHUNK_OVERLAP = 200
 
+# Индексация
+INDEX_BATCH_SIZE = 64
+
 # Поиск
-RETRIEVAL_TOP_K = 60
+RETRIEVAL_TOP_K = 80
 MIN_RELEVANCE   = 0.00
 MAX_CTX_CHARS   = 18000
 RERANK_TOP_K    = 12
+SUMMARY_TOP_K   = 40
 
 # HyDE
-USE_HYDE      = True
+USE_HYDE      = False
 HYDE_VARIANTS = 3
 
 # Форматы файлов

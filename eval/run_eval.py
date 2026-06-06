@@ -23,7 +23,10 @@ def normalize(text: str) -> str:
 
 
 def main():
-    questions_path = Path(__file__).parent / "questions.json"
+    if len(sys.argv) > 1:
+        questions_path = Path(sys.argv[1])
+    else:
+        questions_path = Path(__file__).parent / "questions_network_math.json"
     questions = load_questions(str(questions_path))
 
     kb = KnowledgeBase()

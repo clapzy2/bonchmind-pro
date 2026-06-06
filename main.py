@@ -190,6 +190,100 @@ def on_refresh_files():
     return gr.Dropdown(choices=get_file_choices(), value="Все файлы")
 
 
+def format_sources_for_answer(
+    sources,
+    selected_file="Все файлы",
+    title="**Основные источники:**",
+    limit=3,
+):
+    """
+    Оформляет источники так, чтобы не показывать лишнее.
+
+    Если выбран конкретный файл:
+    - файл не дублируется;
+    - показывается только раздел, если он есть.
+
+    Если выбраны все файлы:
+    - показывается файл и раздел.
+    """
+    if not sources:
+        return ""
+
+    grouped = {}
+
+    for src in sources:
+        source_file = src.get("source_file", "?")
+        section = src.get("section", "")
+        score = float(src.get("score", 0))
+
+        key = (source_file, section)
+
+        if key not in grouped:
+            grouped[key] = {
+                "source_file": source_file,
+                "section": section,
+                "best_score": score,
+            }
+        else:
+            grouped[key]["best_score"] = max(grouped[key]["best_score"], score)
+
+    sorted_sources = sorted(
+        grouped.values(),
+        key=lambda item: item["best_score"],
+        reverse=True,
+    )[:limit]
+
+    lines = [f"\n\n{title}"]
+
+    for i, src in enumerate(sorted_sources, start=1):
+        source_file = src["source_file"]
+        section = src["section"]
+        score = round(src["best_score"], 3)
+
+        if selected_file != "Все файлы":
+            if not section:
+                continue
+
+            lines.append(
+                f"{i}. Раздел: {section}\n"
+                f"   Релевантность: {score}"
+            )
+        else:
+            if section:
+                lines.append(
+                    f"{i}. {source_file} → {section}\n"
+                    f"   Релевантность: {score}"
+                )
+            else:
+                lines.append(
+                    f"{i}. {source_file}\n"
+                    f"   Релевантность: {score}"
+                )
+
+    if len(lines) == 1:
+        return ""
+
+    return "\n".join(lines)
+
+def format_no_information_message(selected_file):
+    """Красивое сообщение, если информации нет."""
+    if selected_file and selected_file != "Все файлы":
+        return (
+            "Информация по данному вопросу не найдена в выбранном материале.\n\n"
+            "Попробуйте:\n"
+            "• выбрать другой файл;\n"
+            "• выбрать «Все файлы»;\n"
+            "• переформулировать вопрос."
+        )
+
+    return (
+        "Информация по данному вопросу не найдена в загруженных материалах.\n\n"
+        "Попробуйте:\n"
+        "• загрузить дополнительные материалы;\n"
+        "• выбрать другой файл;\n"
+        "• переформулировать вопрос."
+    )
+
 # Обработчик чата
 
 def chat_respond(message, history, selected_file, answer_mode):
@@ -279,52 +373,32 @@ def chat_respond(message, history, selected_file, answer_mode):
 
         # Если LLM отказалась отвечать
         if is_refusal(answer):
-            refusal_text = "НЕТ ИНФОРМАЦИИ"
+            refusal_text = format_no_information_message(selected_file)
 
-            if sources:
-                source_lines = ["\n\n**Близкие найденные фрагменты:**"]
+            nearby_sources = format_sources_for_answer(
+                sources,
+                selected_file=selected_file,
+                title="**Близкие найденные источники:**",
+            )
 
-                for i, src in enumerate(sources[:3], start=1):
-                    section = src.get("section", "")
-                    score = src.get("score", 0)
-
-                    if section:
-                        source_lines.append(
-                            f"{i}. {src['source_file']} → {section}\n"
-                            f"   Релевантность: {score}"
-                        )
-                    else:
-                        source_lines.append(
-                            f"{i}. {src['source_file']}\n"
-                            f"   Релевантность: {score}"
-                        )
-
-                refusal_text += "\n".join(source_lines)
+            if nearby_sources:
+                refusal_text += nearby_sources
 
             new_history[-1]["content"] = refusal_text
             yield new_history
             return
 
-        if sources:
-            source_lines = ["\n\n**Основные найденные источники:**"]
+        source_block = format_sources_for_answer(
+            sources,
+            selected_file=selected_file,
+        )
 
-            for i, src in enumerate(sources[:3], start=1):
-                section = src.get("section", "")
-                score = src.get("score", 0)
+        if source_block:
+            new_history[-1]["content"] = answer + source_block
+        else:
+            new_history[-1]["content"] = answer
 
-                if section:
-                    source_lines.append(
-                        f"{i}. {src['source_file']} → {section}\n"
-                        f"   Релевантность: {score}"
-                    )
-                else:
-                    source_lines.append(
-                        f"{i}. {src['source_file']}\n"
-                        f"   Релевантность: {score}"
-                    )
-
-            new_history[-1]["content"] = answer + "\n".join(source_lines)
-            yield new_history
+        yield new_history
 
     except Exception as e:
         yield history + [
@@ -354,26 +428,277 @@ def on_export_summary_docx(summary_text, selected_file, selected_section, summar
         name_parts=[selected_file, selected_section, summary_type],
     )
 
-def on_generate_summary(selected_file, selected_section, summary_type):
+def _summary_generation_params(summary_type):
+    """Параметры поиска и генерации для разных размеров конспекта."""
+    summary_type = (summary_type or "").lower()
+    base_top_k = getattr(config, "SUMMARY_TOP_K", 40)
+
+    if "крат" in summary_type:
+        return {
+            "top_k": max(12, min(24, base_top_k // 2)),
+            "group_size": 6,
+            "chunk_tokens": 650,
+            "final_tokens": 1200,
+        }
+
+    if "подроб" in summary_type:
+        return {
+            "top_k": max(80, base_top_k * 2),
+            "group_size": 6,
+            "chunk_tokens": 1200,
+            "final_tokens": 3600,
+        }
+
+    return {
+        "top_k": base_top_k,
+        "group_size": 5,
+        "chunk_tokens": 900,
+        "final_tokens": 2200,
+    }
+
+def generate_selected_section_summary(
+    kb,
+    llm,
+    selected_file,
+    section_filter,
+    topic,
+    summary_type,
+):
+    """
+    Быстрый конспект по выбранному разделу.
+
+    Если пользователь явно выбрал раздел, не делаем semantic search.
+    Берём только чанки этого раздела и конспектируем их напрямую.
+    """
+    params = _summary_generation_params(summary_type)
+
+    file_filter = "all" if selected_file == "Все файлы" else selected_file
+
+    chunks = kb.get_file_chunks(
+        file_filter=file_filter,
+        section_filter=section_filter,
+    )
+
+    if not chunks:
+        return (
+            "Информация по выбранному разделу не найдена.\n\n"
+            "Попробуйте:\n"
+            "• выбрать другой раздел;\n"
+            "• выбрать «Все разделы»;\n"
+            "• переиндексировать материал."
+        )
+
+    group_size = params["group_size"]
+    partial_summaries = []
+
+    for i in range(0, len(chunks), group_size):
+        group = chunks[i:i + group_size]
+
+        context_parts = []
+
+        for chunk in group:
+            section = chunk.get("section", "")
+            label = (
+                f'{chunk["source_file"]} | {section}'
+                if section
+                else chunk["source_file"]
+            )
+            context_parts.append(f"[{label}]\n{chunk['text']}")
+
+        context = "\n\n---\n\n".join(context_parts)
+
+        if topic:
+            prompt = config.PROMPTS["topic_summary_chunk"].format(
+                system=config.SYSTEM_PROMPT,
+                topic=topic,
+                context=context,
+            )
+        else:
+            prompt = config.PROMPTS["summary_chunk"].format(
+                system=config.SYSTEM_PROMPT,
+                context=context,
+            )
+
+        partial = llm.call(prompt, max_tokens=params["chunk_tokens"]).strip()
+
+        if partial and not partial.upper().startswith("НЕ ОТНОСИТСЯ"):
+            partial_summaries.append(partial)
+
+    if not partial_summaries:
+        return (
+            "Информация по указанной теме не найдена в выбранном разделе.\n\n"
+            "Попробуйте:\n"
+            "• убрать тему и сделать конспект всего раздела;\n"
+            "• выбрать другой раздел;\n"
+            "• выбрать «Все разделы»."
+        )
+
+    combined_context = "\n\n---\n\n".join(partial_summaries)
+
+    if topic:
+        final_prompt = config.PROMPTS["topic_summary_reduce"].format(
+            system=config.SYSTEM_PROMPT,
+            topic=topic,
+            context=combined_context,
+            summary_type=summary_type.lower(),
+        )
+    else:
+        final_prompt = config.PROMPTS["summary_reduce"].format(
+            system=config.SYSTEM_PROMPT,
+            context=combined_context,
+            summary_type=summary_type.lower(),
+        )
+
+    result = llm.call(final_prompt, max_tokens=params["final_tokens"])
+
+    header = (
+        f"Конспект по выбранному разделу\n"
+        f"Материал: {selected_file}\n"
+        f"Раздел: {section_filter}\n"
+        f"Тип: {summary_type.lower()}\n"
+    )
+
+    if topic:
+        header += f"Тема / период: {topic}\n"
+
+    header += f"Фрагментов раздела: {len(chunks)}\n\n"
+
+    return header + result
+
+def generate_topic_summary(kb, llm, topic, summary_type, file_filter="all", section_filter=None):
+    """
+    Тематический конспект через semantic search + rerank.
+
+    Тема → HyDE → embedding → ChromaDB → rerank → лучшие чанки → map-reduce конспект.
+    """
+    params = _summary_generation_params(summary_type)
+    topic_chunks = kb.search_chunks_for_summary(
+        query=topic,
+        file_filter=file_filter,
+        section_filter=section_filter,
+        top_k=params["top_k"],
+    )
+
+    if not topic_chunks:
+        return (
+            "Информация по указанной теме/периоду не найдена в выбранных материалах.\n\n"
+            "Попробуйте:\n"
+            "• выбрать другой файл;\n"
+            "• выбрать «Все разделы»;\n"
+            "• указать тему иначе."
+        )
+
+    group_size = params["group_size"]
+    partial_summaries = []
+
+    for i in range(0, len(topic_chunks), group_size):
+        group = topic_chunks[i:i + group_size]
+
+        context_parts = []
+
+        for chunk in group:
+            section = chunk.get("section", "")
+            label = (
+                f'{chunk["source_file"]} | {section}'
+                if section
+                else chunk["source_file"]
+            )
+            context_parts.append(f"[{label}]\n{chunk['text']}")
+
+        context = "\n\n---\n\n".join(context_parts)
+
+        prompt = config.PROMPTS["topic_summary_chunk"].format(
+            system=config.SYSTEM_PROMPT,
+            topic=topic,
+            context=context,
+        )
+
+        partial_raw = llm.call(prompt, max_tokens=params["chunk_tokens"])
+        partial = partial_raw.strip()
+
+        partial_clean = partial.strip()
+        partial_upper = partial_clean.upper()
+
+        if partial_clean and not partial_upper.startswith("НЕ ОТНОСИТСЯ"):
+            partial_summaries.append(partial_clean)
+
+    if not partial_summaries:
+        return (
+            "Информация по указанной теме/периоду не найдена в выбранных материалах.\n\n"
+            "Попробуйте:\n"
+            "• указать тему иначе;\n"
+            "• выбрать другой файл;\n"
+            "• выбрать «Все разделы»."
+        )
+
+    combined_context = "\n\n---\n\n".join(partial_summaries)
+
+    final_prompt = config.PROMPTS["topic_summary_reduce"].format(
+        system=config.SYSTEM_PROMPT,
+        topic=topic,
+        context=combined_context,
+        summary_type=summary_type.lower(),
+    )
+
+    result = llm.call(final_prompt, max_tokens=params["final_tokens"])
+
+    section_label = section_filter if section_filter else "Все разделы"
+
+    header = (
+        f"Тематический конспект\n"
+        f"Тема / период: {topic}\n"
+        f"Раздел: {section_label}\n"
+        f"Тип: {summary_type.lower()}\n"
+        f"Найдено фрагментов: {len(topic_chunks)}\n\n"
+    )
+
+    return header + result
+
+def on_generate_summary(selected_file, selected_section, topic, summary_type):
     """Сгенерировать конспект по выбранному файлу через обработку чанков."""
     try:
         kb = _get_kb()
         llm = _get_llm()
 
         file_filter = "all" if selected_file == "Все файлы" else selected_file
-        chunks = kb.get_file_chunks(file_filter=file_filter)
 
+        section_filter = None
         if selected_section and selected_section != "Все разделы":
-            chunks = [
-                chunk for chunk in chunks
-                if chunk.get("section") == selected_section
-            ]
+            section_filter = selected_section
+
+        topic = (topic or "").strip()
+
+        # Если пользователь явно выбрал раздел — работаем только с ним.
+        # Это быстрее и точнее, чем semantic search по всему учебнику.
+        if section_filter:
+            return generate_selected_section_summary(
+                kb=kb,
+                llm=llm,
+                selected_file=selected_file,
+                section_filter=section_filter,
+                topic=topic,
+                summary_type=summary_type,
+            )
+
+        # Если раздел не выбран, но тема указана — используем тематический поиск.
+        if topic:
+            return generate_topic_summary(
+                kb=kb,
+                llm=llm,
+                topic=topic,
+                summary_type=summary_type,
+                file_filter=file_filter,
+                section_filter=None,
+            )
+
+        params = _summary_generation_params(summary_type)
+        chunks = kb.get_file_chunks(file_filter=file_filter)
 
         if not chunks:
             return "НЕТ ИНФОРМАЦИИ - база пуста или файл не проиндексирован."
 
         # Берём группы чанков, чтобы не перегружать модель.
-        group_size = 5
+        group_size = params["group_size"]
         partial_summaries = []
 
         for i in range(0, len(chunks), group_size):
@@ -392,7 +717,7 @@ def on_generate_summary(selected_file, selected_section, summary_type):
                 context=context,
             )
 
-            partial = llm.call(prompt, max_tokens=900)
+            partial = llm.call(prompt, max_tokens=params["chunk_tokens"])
             if partial.strip():
                 partial_summaries.append(partial.strip())
 
@@ -404,7 +729,7 @@ def on_generate_summary(selected_file, selected_section, summary_type):
             summary_type=summary_type.lower(),
         )
 
-        summary = llm.call(final_prompt, max_tokens=1800)
+        summary = llm.call(final_prompt, max_tokens=params["final_tokens"])
 
         file_label = "всем материалам" if selected_file == "Все файлы" else selected_file
         section_label = (
@@ -518,6 +843,12 @@ def build_gui():
                     outputs=summary_section,
                 )
 
+                summary_topic = gr.Textbox(
+                    label="Тема / период",
+                    placeholder="Например: Россия после Николая II до 2000 года",
+                    lines=2,
+                )
+
                 summary_type = gr.Dropdown(
                     choices=["Краткий", "Средний", "Подробный"],
                     value="Средний",
@@ -552,9 +883,13 @@ def build_gui():
                     clear_summary_output,
                     outputs=[summary_out, summary_export_file],
                 )
+                summary_topic.change(
+                    clear_summary_output,
+                    outputs=[summary_out, summary_export_file],
+                )
                 summary_btn.click(
                     on_generate_summary,
-                    inputs=[summary_file, summary_section, summary_type],
+                    inputs=[summary_file, summary_section, summary_topic, summary_type],
                     outputs=summary_out,
                 )
 

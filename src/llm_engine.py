@@ -25,22 +25,27 @@ class _OllamaBackend:
 
     def generate(self, prompt, temperature, max_tokens, stream=False):
         """Отправляет запрос к локальному серверу Ollama."""
+
+        if "qwen3" in config.OLLAMA_MODEL.lower():
+            prompt = "/no_think\n" + prompt
+
         payload = {
-            "model":  config.OLLAMA_MODEL,
+            "model": config.OLLAMA_MODEL,
             "prompt": prompt,
             "stream": stream,
             "options": {
-                "temperature":  temperature,
-                "top_p":          config.LLM_TOP_P,
-                "num_predict":    max_tokens,
+                "temperature": temperature,
+                "top_p": config.LLM_TOP_P,
+                "num_predict": max_tokens,
                 "repeat_penalty": config.LLM_REPEAT_PENALTY,
-                "stop":           ["<|im_end|>", "</s>", "ВОПРОС:", "КОНТЕКСТ:"],
+                "stop": ["<|im_end|>", "</s>"],
             },
         }
+
         if stream:
-            # Потоковый режим: читаем ответ по кусочкам (для стриминга в чате)
             r = self._requests.post(config.OLLAMA_URL, json=payload, stream=True, timeout=180)
             r.raise_for_status()
+
             for line in r.iter_lines():
                 if line:
                     chunk = json.loads(line)
@@ -48,10 +53,13 @@ class _OllamaBackend:
                     if chunk.get("done"):
                         break
         else:
-            # Обычный режим: ждём полный ответ
             r = self._requests.post(config.OLLAMA_URL, json=payload, timeout=180)
             r.raise_for_status()
-            yield r.json().get("response", "").strip()
+
+            data = r.json()
+            text = (data.get("response") or "").strip()
+
+            yield text
 
     def is_available(self):
         """Проверяет, запущен ли сервер Ollama."""

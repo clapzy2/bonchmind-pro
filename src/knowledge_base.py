@@ -139,7 +139,7 @@ class KnowledgeBase:
             return f"⏭️ {filename} - уже в базе"
 
         # Добавляем в ChromaDB пачками по 32
-        batch_size = 32
+        batch_size = getattr(config, "INDEX_BATCH_SIZE", 64)
         for i in range(0, len(new_chunks), batch_size):
             batch = new_chunks[i:i+batch_size]
             b_ids = new_ids[i:i+batch_size]
@@ -195,7 +195,7 @@ class KnowledgeBase:
                 if s:
                     sections.add(s)
         return {"total_chunks": self._col.count(), "total_books": len(books),
-                "books": sorted(books), "sections": sorted(sections)}
+                "books": sorted(books), "sections": sorted(sections, key=self._section_sort_key)}
 
     # HyDE: расширение запроса
     def _expand_query(self, query):
@@ -307,7 +307,7 @@ class KnowledgeBase:
             if section:
                 sections.add(section)
 
-        return sorted(sections)
+        return sorted(sections, key=self._section_sort_key)
 
     # Распознавание раздела в запросе пользователя
     def get_available_sections(self):
@@ -315,7 +315,10 @@ class KnowledgeBase:
         if self._col.count() == 0:
             return []
         data = self._col.get(include=["metadatas"])
-        return sorted({m.get("section", "") for m in data["metadatas"] if m and m.get("section")})
+        return sorted(
+            {m.get("section", "") for m in data["metadatas"] if m and m.get("section")},
+            key=self._section_sort_key,
+        )
 
     def find_section_in_query(self, query):
         """
@@ -422,6 +425,356 @@ class KnowledgeBase:
 
         return context, sources
 
+    def _is_noise_summary_chunk(self, text):
+        """Отсекает мусорные чанки для конспекта: оглавление, ISBN, списки иллюстраций."""
+        if not text:
+            return True
+
+        t = text.lower()
+
+        noise_markers = [
+            "оглавление",
+            "содержание",
+            "isbn",
+            "список иллюстраций",
+            "список литературы",
+            "библиографический список",
+            "учебник предназначен",
+            "министерство науки",
+            "издательство",
+            "автор фото",
+            "риа новости",
+            "цит. по",
+            "цит по",
+            "список источников",
+            "источники иллюстраций",
+            "описание изображения",
+            "ссылка на архив",
+        ]
+
+        if any(marker in t for marker in noise_markers):
+            return True
+
+        # Много точек подряд часто означает оглавление
+        if text.count(".....") >= 2:
+            return True
+
+        if re.search(r"^\s*\d{1,3}\.\s+.{0,120}(плакат|портрет|фото|цит\.?\s+по)", t):
+            return True
+
+        # Слишком короткий фрагмент бесполезен
+        if len(text.strip()) < 250:
+            return True
+
+        return False
+
+    @staticmethod
+    def _section_sort_key(section):
+        """Натуральная сортировка разделов: Глава 2 раньше Главы 12."""
+        text = str(section or "").strip().lower()
+
+        chapter = re.match(r"^глава\s+(\d+)\b", text)
+        if chapter:
+            return (0, int(chapter.group(1)), text)
+
+        paragraph = re.match(r"^§\s*(\d+)\b", text)
+        if paragraph:
+            return (1, int(paragraph.group(1)), text)
+
+        numbers = re.findall(r"\d+", text)
+        if numbers:
+            return (2, int(numbers[0]), text)
+
+        return (3, text)
+
+    def _query_year_bounds(self, query):
+        """Возвращает нижнюю и верхнюю границу годов из темы, если их можно вывести."""
+        q = query.lower()
+        years = [int(y) for y in re.findall(r"\b(1[0-9]{3}|20[0-9]{2})\b", q)]
+
+        if len(years) >= 2:
+            return min(years), max(years)
+
+        if not years:
+            return None, None
+
+        year = years[0]
+        start, end = None, None
+
+        if re.search(r"\b(до|перед)\s+" + str(year) + r"\b", q):
+            end = year
+        if re.search(r"\b(после|с|от)\s+" + str(year) + r"\b", q):
+            start = year
+
+        # Частый учебный запрос: после Николая II фактически означает период
+        # после крушения монархии и революции 1917 года.
+        if end and ("николая ii" in q or "николай ii" in q):
+            start = 1917
+
+        return start, end
+
+    @staticmethod
+    def _years_from_text(text):
+        """Извлекает годы из текста в виде чисел."""
+        return [int(y) for y in re.findall(r"\b(1[0-9]{3}|20[0-9]{2})\b", text.lower())]
+
+    def _is_out_of_topic_year_range(self, text, query):
+        """
+        Отсекает фрагменты, которые по явным годам находятся вне периода темы.
+
+        Смешанные фрагменты тоже отбрасываются, если годов после верхней границы
+        больше, чем годов внутри диапазона: это снижает утечки в 2000-е/2010-е.
+        """
+        start, end = self._query_year_bounds(query)
+        if start is None and end is None:
+            return False
+
+        years = self._years_from_text(text)
+        if not years:
+            return False
+
+        inside = [
+            year for year in years
+            if (start is None or year >= start) and (end is None or year <= end)
+        ]
+        before = [year for year in years if start is not None and year < start]
+        after = [year for year in years if end is not None and year > end]
+
+        if not inside and (before or after):
+            return True
+
+        if after and len(after) > len(inside):
+            return True
+
+        if before and len(before) > len(inside) and len(before) >= 3:
+            return True
+
+        return False
+
+    def _topic_lexical_score(self, text, query):
+        """
+        Дополнительная оценка для тематического конспекта.
+        Нужна, чтобы темы типа 'Россия после Николая II до 2000 года'
+        не улетали в древность, Петра I и Александра II.
+        """
+        t = text.lower()
+        q = query.lower()
+
+        score = 0
+
+        if self._is_out_of_topic_year_range(t, q):
+            return 0
+
+        # Общие слова из запроса
+        words = re.findall(r"[а-яёa-z0-9]{3,}", q)
+        stop = {
+            "что", "это", "как", "где", "когда", "после", "года",
+            "год", "лет", "тема", "период", "россия", "россии",
+        }
+
+        for word in words:
+            if word not in stop and word in t:
+                score += 2
+
+        start, end = self._query_year_bounds(query)
+        chunk_years = self._years_from_text(text)
+
+        if start is not None or end is not None:
+            in_range = []
+            before_range = []
+            after_range = []
+
+            for year in chunk_years:
+                if start is not None and year < start:
+                    before_range.append(year)
+                elif end is not None and year > end:
+                    after_range.append(year)
+                else:
+                    in_range.append(year)
+
+            if chunk_years:
+                if not in_range:
+                    return -20.0
+
+                score += len(in_range) * 5
+                score -= len(before_range) * 3
+                score -= len(after_range) * 8
+
+                if after_range and len(after_range) >= len(in_range):
+                    score -= 12 * (len(after_range) - len(in_range) + 1)
+
+        # Исторические маркеры для XX века
+        history_markers = [
+            "николай ii", "1917", "феврал", "октябр", "революц",
+            "временное правительство", "большев", "ленин",
+            "гражданской вой", "гражданская вой", "нэп",
+            "советской россии", "ссср", "сталин",
+            "индустриализац", "коллективизац",
+            "великая отечественная", "1941", "1945",
+            "хрущ", "брежнев", "застой",
+            "перестройк", "горбач", "1990", "1991",
+            "распад ссср", "ельцин", "россия 1990",
+            "экономических реформ", "конституция 1993",
+        ]
+
+        for marker in history_markers:
+            if marker in t:
+                score += 4
+
+        # Штрафы за явно ранние эпохи
+        old_markers = [
+            "древняя русь", "монгольское нашествие", "золотой орды",
+            "иван грозный", "петр i", "екатерина ii",
+            "александр i", "николай i", "александр ii",
+            "xviii", "xix"
+        ]
+
+        for marker in old_markers:
+            if marker in t:
+                score -= 4
+
+        return score
+
+    def _lexical_candidates_for_summary(self, query, file_filter="all", section_filter=None, limit=120):
+        """
+        Дополнительный лексический поиск по всей базе/файлу.
+        Нужен для больших учебников, когда semantic search цепляет оглавление и ранние главы.
+        """
+        where = self._build_where_filter(file_filter, section_filter)
+
+        if where:
+            data = self._col.get(
+                where=where,
+                include=["documents", "metadatas"]
+            )
+        else:
+            data = self._col.get(include=["documents", "metadatas"])
+
+        scored = []
+
+        for doc, meta in zip(data.get("documents", []), data.get("metadatas", [])):
+            if self._is_noise_summary_chunk(doc):
+                continue
+
+            score = self._topic_lexical_score(doc, query)
+
+            if score > 0:
+                scored.append((score, doc, meta))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        result = []
+
+        for score, doc, meta in scored[:limit]:
+            result.append((doc, meta, float(score)))
+
+        return result
+
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+        """
+        Поиск чанков для тематического конспекта.
+
+        Комбинирует:
+        1. Semantic search через BGE-M3;
+        2. Rerank через BGE-Reranker;
+        3. Лексический добор по годам и историческим маркерам;
+        4. Фильтр мусора: оглавление, ISBN, список иллюстраций.
+        """
+        if self._col.count() == 0:
+            return []
+
+        if top_k is None:
+            top_k = config.SUMMARY_TOP_K
+
+        kw_filter = self._build_where_filter(file_filter, section_filter)
+
+        # 1. Semantic search
+        queries = self._expand_query(query)
+
+        original_top_k = config.RETRIEVAL_TOP_K
+
+        try:
+            config.RETRIEVAL_TOP_K = max(original_top_k, top_k * 3)
+            semantic_candidates = self._raw_search(queries, kw_filter)
+        finally:
+            config.RETRIEVAL_TOP_K = original_top_k
+
+        # 2. Лексический добор по датам/маркерам
+        lexical_candidates = self._lexical_candidates_for_summary(
+            query=query,
+            file_filter=file_filter,
+            section_filter=section_filter,
+            limit=top_k * 3,
+        )
+
+        # 3. Объединяем кандидатов без дублей
+        combined = []
+        seen = set()
+
+        for doc, meta, score in semantic_candidates + lexical_candidates:
+            if self._is_noise_summary_chunk(doc):
+                continue
+
+            if self._is_out_of_topic_year_range(doc, query):
+                continue
+
+            h = self._md5(doc)
+
+            if h in seen:
+                continue
+
+            seen.add(h)
+            combined.append((doc, meta, score))
+
+        if not combined:
+            return []
+
+        # 4. Реранк
+        self._ensure_reranker()
+
+        if self._reranker and len(combined) > 1:
+            docs = [c[0] for c in combined]
+            pairs = [[query, d] for d in docs]
+            scores = self._reranker.predict(pairs)
+
+            ranked = []
+
+            for candidate, rerank_score in zip(combined, scores):
+                doc, meta, _ = candidate
+                lexical_bonus = self._topic_lexical_score(doc, query)
+                final_score = float(rerank_score) + lexical_bonus * 0.15
+                ranked.append((candidate, final_score))
+
+            ranked.sort(key=lambda x: x[1], reverse=True)
+            best = ranked[:top_k]
+        else:
+            ranked = []
+
+            for candidate in combined:
+                doc, meta, base_score = candidate
+                lexical_bonus = self._topic_lexical_score(doc, query)
+                final_score = float(base_score) + lexical_bonus
+                ranked.append((candidate, final_score))
+
+            ranked.sort(key=lambda x: x[1], reverse=True)
+            best = ranked[:top_k]
+
+        # 5. Возвращаем в порядке документа
+        result = []
+
+        for (doc, meta, _), score in best:
+            result.append({
+                "text": doc,
+                "source_file": meta.get("source_file", "?"),
+                "section": meta.get("section", ""),
+                "chunk_id": meta.get("chunk_id", 0),
+                "score": round(float(score), 3),
+            })
+
+        result.sort(key=lambda x: (x["source_file"], int(x["chunk_id"])))
+
+        return result
+
     def search(self, query, file_filter="all", section_filter=None):
         """
         Старый интерфейс поиска: возвращает только контекст.
@@ -430,19 +783,20 @@ class KnowledgeBase:
         context, _ = self.search_with_sources(query, file_filter, section_filter)
         return context
 
-    def get_file_chunks(self, file_filter="all"):
-        """Получить все чанки выбранного файла."""
+        def get_file_chunks(self, file_filter="all", section_filter=None):
+            """Получить чанки выбранного файла и, при необходимости, выбранного раздела."""
         if self._col.count() == 0:
             return []
 
-        where = None
-        if file_filter and file_filter != "all":
-            where = {"source_file": file_filter}
+        where = self._build_where_filter(file_filter, section_filter)
 
-        data = self._col.get(
-            where=where,
-            include=["documents", "metadatas"]
-        ) if where else self._col.get(include=["documents", "metadatas"])
+        if where:
+            data = self._col.get(
+                where=where,
+                include=["documents", "metadatas"]
+            )
+        else:
+            data = self._col.get(include=["documents", "metadatas"])
 
         chunks = []
 
@@ -454,7 +808,7 @@ class KnowledgeBase:
                 "chunk_id": meta.get("chunk_id", 0),
             })
 
-        chunks.sort(key=lambda x: (x["source_file"], x["chunk_id"]))
+        chunks.sort(key=lambda x: (x["source_file"], int(x["chunk_id"])))
         return chunks
 
     def get_available_files(self):

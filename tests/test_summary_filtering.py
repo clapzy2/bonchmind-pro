@@ -54,3 +54,30 @@ def test_summary_noise_filter_rejects_image_captions_and_source_lists():
         "Список иллюстраций и источников. М., 2024. "
         + "Библиографическое описание изображения. " * 8
     )
+
+
+def test_summary_noise_filter_rejects_caption_after_section_label():
+    kb = make_kb()
+
+    assert kb._is_noise_summary_chunk(
+        "[СПИСОК ИЛЛЮСТРАЦИЙ]\n"
+        "110. Вооруженная революционная охрана у здания Петроградского совета. "
+        "111. А.Ф. Керенский. Портрет. "
+        "112. В.И. Ленин. Цит. по: История России: В 20 т. "
+        + "Автор фото: архив РИА Новости. " * 8
+    )
+
+
+def test_topic_lexical_score_prefers_exact_topic_heading():
+    kb = make_kb()
+
+    exact = kb._topic_lexical_score(
+        "4.5. Широкополосные беспроводные сети. WiMAX и стандарт 802.16.",
+        "Широкополосные беспроводные сети",
+    )
+    broad = kb._topic_lexical_score(
+        "Беспроводные локальные сети используют стандарт IEEE 802.11.",
+        "Широкополосные беспроводные сети",
+    )
+
+    assert exact > broad + 20

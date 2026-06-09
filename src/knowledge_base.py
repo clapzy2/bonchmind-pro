@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from src.document_loader import load_file
-from src.text_processing import detect_sections, clean_sections, get_splitter
+from src.text_processing import clean_sections, detect_sections, get_splitter, is_user_visible_section
 
 
 
@@ -86,15 +86,63 @@ class KnowledgeBase:
         """Хеш текста для проверки дубликатов."""
         return hashlib.md5(text.strip().encode()).hexdigest()
 
+    @staticmethod
+    def _is_library_file_path(file_path):
+        """
+        Пользовательская библиотека пока работает только с файлами верхнего уровня docs/.
+
+        Это защищает индекс от внутренних служебных подпапок проекта вроде
+        docs/superpowers/specs и docs/superpowers/plans.
+        """
+        if not file_path:
+            return False
+
+        normalized_docs = os.path.normcase(os.path.abspath(config.DOCS_DIR))
+        normalized_path = os.path.normcase(os.path.abspath(file_path))
+
+        try:
+            common = os.path.commonpath([normalized_docs, normalized_path])
+        except ValueError:
+            return False
+
+        if common != normalized_docs:
+            return False
+
+        relative = os.path.relpath(normalized_path, normalized_docs)
+        if relative.startswith(".."):
+            return False
+
+        return os.path.dirname(relative) in ("", ".")
+
+    @classmethod
+    def _iter_library_files(cls):
+        """Возвращает только пользовательские материалы из корня docs/."""
+        os.makedirs(config.DOCS_DIR, exist_ok=True)
+        files = []
+        for ext in config.SUPPORTED_FORMATS:
+            files.extend(glob.glob(os.path.join(config.DOCS_DIR, f"*{ext}")))
+        return sorted(
+            {
+                os.path.abspath(file_path)
+                for file_path in files
+                if cls._is_library_file_path(file_path)
+            }
+        )
+
     # Индексация файла
-    def add_book(self, file_path):
+    def add_book(self, file_path, progress_callback=None):
         """Загрузить файл, разбить на чанки, добавить в ChromaDB"""
+        def report(**payload):
+            if progress_callback:
+                progress_callback(**payload)
+
         filename = os.path.basename(file_path)
         lower = file_path.lower()
         supported = any(lower.endswith(fmt) for fmt in config.SUPPORTED_FORMATS)
         if not supported:
             return f"Формат не поддерживается: {filename}"
 
+        report(phase="reading", progress=5, message=f"Читаю {filename}", current_file=filename)
         self._log(f"Обрабатываем: {filename}")
         try:
             raw = load_file(file_path)
@@ -109,6 +157,7 @@ class KnowledgeBase:
         if has_sections:
             names = [s[0] for s in sections if s[0]]
             self._log(f"Найдено {len(sections)} разделов: {', '.join(names[:5])}{'...' if len(names) > 5 else ''}")
+        report(phase="sectioning", progress=20, message="Выделяю разделы и подготавливаю структуру", current_file=filename)
 
         sections = clean_sections(sections)
 
@@ -136,8 +185,10 @@ class KnowledgeBase:
                     })
 
         if not new_chunks:
+            report(phase="done", progress=100, message=f"{filename} уже есть в базе", current_file=filename)
             return f"⏭️ {filename} - уже в базе"
 
+        report(phase="chunking", progress=35, message=f"Подготовлено {len(new_chunks)} фрагментов", current_file=filename)
         # Добавляем в ChromaDB пачками по 32
         batch_size = getattr(config, "INDEX_BATCH_SIZE", 64)
         for i in range(0, len(new_chunks), batch_size):
@@ -148,24 +199,47 @@ class KnowledgeBase:
             self._col.add(ids=b_ids, embeddings=embeddings, documents=batch, metadatas=b_metas)
             pct = min(100, int((i + len(batch)) / len(new_chunks) * 100))
             self._log(f"  {filename}: {pct}%")
+            progress_pct = 40 + int(pct * 0.55)
+            report(
+                phase="indexing",
+                progress=min(progress_pct, 95),
+                message=f"Сохраняю фрагменты в индекс: {pct}%",
+                current_file=filename,
+            )
 
         section_info = f" ({len(sections)} разделов)" if has_sections else ""
+        report(phase="done", progress=100, message=f"{filename} готов к поиску", current_file=filename)
         return f"✅ {filename}: добавлено {len(new_chunks)} фрагментов{section_info}"
 
-    def index_all_books(self):
+    def index_all_books(self, progress_callback=None):
         """Проиндексировать все файлы из папки docs/"""
-        os.makedirs(config.DOCS_DIR, exist_ok=True)
-        files = []
-        for ext in config.SUPPORTED_FORMATS:
-            files.extend(glob.glob(os.path.join(config.DOCS_DIR, f"**/*{ext}"), recursive=True))
-        files = sorted(set(files))
+        files = self._iter_library_files()
         if not files:
             return f"Нет файлов в docs/\nПоддерживаемые форматы: {', '.join(config.SUPPORTED_FORMATS)}"
+
+        def report(**payload):
+            if progress_callback:
+                progress_callback(**payload)
+
+        report(phase="reading", progress=3, message=f"Найдено файлов: {len(files)}")
         results = [f"📚 Найдено файлов: {len(files)}"]
-        for fp in files:
-            results.append(self.add_book(fp))
+        for index, fp in enumerate(files, start=1):
+            filename = os.path.basename(fp)
+
+            def nested_progress(**payload):
+                file_progress = int(payload.get("progress", 0) or 0)
+                overall = int(((index - 1) + file_progress / 100) / len(files) * 100)
+                report(
+                    phase=payload.get("phase", ""),
+                    progress=min(max(overall, 3), 99),
+                    message=payload.get("message", ""),
+                    current_file=payload.get("current_file", filename),
+                )
+
+            results.append(self.add_book(fp, progress_callback=nested_progress))
         gc.collect()
         results.append(f"\n📊 Итого в базе: {self._col.count()} фрагментов")
+        report(phase="done", progress=100, message="Библиотека полностью переиндексирована")
         return "\n".join(results)
 
     def clear(self):
@@ -182,6 +256,28 @@ class KnowledgeBase:
         gc.collect()
         return "✅ База очищена"
 
+    def remove_book(self, file_name):
+        """Удалить все чанки конкретного файла из коллекции."""
+        target_name = os.path.basename(str(file_name or "")).strip()
+        if not target_name:
+            return "Файл не указан"
+
+        if self._col.count() == 0:
+            return f"⏭️ {target_name} - база уже пуста"
+
+        existing = self._col.get(
+            where={"source_file": target_name},
+            include=["metadatas"],
+        )
+
+        ids = existing.get("ids", []) or []
+        if not ids:
+            return f"⏭️ {target_name} - в индексе не найден"
+
+        self._col.delete(ids=ids)
+        gc.collect()
+        return f"🗑️ {target_name}: удалено {len(ids)} фрагментов"
+
     def stats(self):
         """Статистика: количество файлов, чанков, разделов."""
         if self._col.count() == 0:
@@ -191,11 +287,19 @@ class KnowledgeBase:
         for m in data["metadatas"]:
             if m:
                 books.add(m.get("source_file", "?"))
-                s = m.get("section", "")
-                if s:
-                    sections.add(s)
+                cleaned = self._clean_user_section(m.get("section", ""))
+                if cleaned:
+                    sections.add(cleaned)
         return {"total_chunks": self._col.count(), "total_books": len(books),
                 "books": sorted(books), "sections": sorted(sections, key=self._section_sort_key)}
+
+    @staticmethod
+    def _clean_user_section(section):
+        section = str(section or "").strip()
+        if not section:
+            return ""
+
+        return section if is_user_visible_section(section) else ""
 
     # HyDE: расширение запроса
     def _expand_query(self, query):
@@ -302,12 +406,46 @@ class KnowledgeBase:
         sections = set()
 
         for meta in data.get("metadatas", []):
-            section = meta.get("section", "").strip()
+            section = self._clean_user_section(meta.get("section", ""))
 
             if section:
                 sections.add(section)
 
         return sorted(sections, key=self._section_sort_key)
+
+    def get_file_profile(self, file_name):
+        """Краткий профиль материала для продуктовой логики UI."""
+        if self._col.count() == 0:
+            return {
+                "chunk_count": 0,
+                "sections_count": 0,
+                "sections": [],
+            }
+
+        data = self._col.get(
+            where={"source_file": file_name},
+            include=["metadatas"],
+        )
+
+        sections = set()
+        chunk_count = 0
+
+        for meta in data.get("metadatas", []):
+            if not meta:
+                continue
+
+            chunk_count += 1
+            section = self._clean_user_section(meta.get("section", ""))
+            if section:
+                sections.add(section)
+
+        ordered_sections = sorted(sections, key=self._section_sort_key)
+
+        return {
+            "chunk_count": chunk_count,
+            "sections_count": len(ordered_sections),
+            "sections": ordered_sections,
+        }
 
     # Распознавание раздела в запросе пользователя
     def get_available_sections(self):
@@ -316,7 +454,13 @@ class KnowledgeBase:
             return []
         data = self._col.get(include=["metadatas"])
         return sorted(
-            {m.get("section", "") for m in data["metadatas"] if m and m.get("section")},
+            {
+                cleaned
+                for m in data["metadatas"]
+                if m
+                for cleaned in [self._clean_user_section(m.get("section", ""))]
+                if cleaned
+            },
             key=self._section_sort_key,
         )
 
@@ -431,6 +575,7 @@ class KnowledgeBase:
             return True
 
         t = text.lower()
+        text_without_label = re.sub(r"^\s*\[[^\]]+\]\s*", "", text.strip())
 
         noise_markers = [
             "оглавление",
@@ -459,7 +604,33 @@ class KnowledgeBase:
         if text.count(".....") >= 2:
             return True
 
-        if re.search(r"^\s*\d{1,3}\.\s+.{0,120}(плакат|портрет|фото|цит\.?\s+по)", t):
+        if re.search(
+            r"^\s*\d{1,3}\.\s+.{0,160}(плакат|портрет|фото|цит\.?\s+по|история россии)",
+            text_without_label.lower(),
+            flags=re.DOTALL,
+        ):
+            return True
+
+        numbered_caption_lines = re.findall(
+            r"(?m)^\s*\d{1,3}\.\s+.{0,180}(плакат|портрет|фото|цит\.?\s+по|автор фото)",
+            text_without_label.lower(),
+        )
+        if len(numbered_caption_lines) >= 1:
+            return True
+
+        numbered_lines = re.findall(r"(?m)^\s*\d{1,3}\.\s+\S+", text_without_label)
+        if len(numbered_lines) >= 3:
+            return True
+
+        source_density_markers = [
+            "цит.",
+            "автор фото",
+            "©",
+            "риа новости",
+            "архив",
+            "история россии: в 20 т.",
+        ]
+        if sum(1 for marker in source_density_markers if marker in t) >= 2:
             return True
 
         # Слишком короткий фрагмент бесполезен
@@ -559,6 +730,7 @@ class KnowledgeBase:
         """
         t = text.lower()
         q = query.lower()
+        normalized_text = re.sub(r"[^а-яёa-z0-9]+", " ", t).strip()
 
         score = 0
 
@@ -575,6 +747,20 @@ class KnowledgeBase:
         for word in words:
             if word not in stop and word in t:
                 score += 2
+
+        meaningful_words = [word for word in words if word not in stop]
+        normalized_query = " ".join(meaningful_words)
+
+        if normalized_query and normalized_query in normalized_text:
+            score += 30 + len(meaningful_words) * 3
+
+        if len(meaningful_words) >= 2:
+            for left, right in zip(meaningful_words, meaningful_words[1:]):
+                if f"{left} {right}" in normalized_text:
+                    score += 5
+
+            if all(word in normalized_text for word in meaningful_words):
+                score += 10
 
         start, end = self._query_year_bounds(query)
         chunk_years = self._years_from_text(text)
@@ -810,19 +996,6 @@ class KnowledgeBase:
 
         chunks.sort(key=lambda x: (x["source_file"], int(x["chunk_id"])))
         return chunks
-
-    def get_available_files(self):
-        """Список файлов в базе (для выпадающего списка)."""
-        if self._col.count() == 0:
-            return []
-
-        data = self._col.get(include=["metadatas"])
-
-        return sorted({
-            m.get("source_file", "")
-            for m in data["metadatas"]
-            if m and m.get("source_file")
-        })
 
     def get_available_files(self):
         """Список файлов в базе (для выпадающего списка)"""

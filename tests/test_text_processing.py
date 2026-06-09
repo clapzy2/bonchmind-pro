@@ -1,4 +1,4 @@
-from src.text_processing import detect_sections, clean_sections
+from src.text_processing import clean_sections, detect_sections, is_user_visible_section
 
 
 def test_detect_sections_by_headers():
@@ -105,6 +105,18 @@ def test_detect_sections_does_not_treat_acronym_heavy_sentences_as_headers():
         "§ 12. Великая Отечественная война",
         "§ 13. Послевоенное восстановление",
     ]
+
+
+def test_user_visible_section_accepts_real_subsection_headers():
+    assert is_user_visible_section("4.5. Широкополосные беспроводные сети")
+    assert is_user_visible_section("4.5.1. Сравнение стандарта 802.16 с 802.11 и 3G")
+
+
+def test_user_visible_section_rejects_formula_and_bibliography_noise():
+    assert not is_user_visible_section("fi(B,C,D) = (B AND C) OR (NOT B AND D) (0<i<19)")
+    assert not is_user_visible_section("RTTVAR = βRTTVAR + (1 - β)|SRTT - R|.")
+    assert not is_user_visible_section("HUNTER, D., RAFTER, J., FAWCETT, J., VAN DER LIST, E., AYERS, D.")
+    assert not is_user_visible_section("QAM, QPSK, RED, RFC, RPC, RSA, RSVP, RTP, SSL, TCP, TDM, UDP, URL, UTP,")
 
 
 def test_clean_sections_removes_extra_spaces_and_newlines():

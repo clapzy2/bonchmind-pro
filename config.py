@@ -25,7 +25,7 @@ API_MODEL = os.getenv("API_MODEL", "qwen/qwen3-32b")
 
 # Настройки Ollama (локальный режим)
 OLLAMA_URL   = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 
 # Параметры генерации
 LLM_MAX_TOKENS     = 2048

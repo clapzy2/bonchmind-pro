@@ -1,4 +1,4 @@
-from main import _summary_generation_params
+from src.summary_engine import _summary_generation_params
 
 
 def test_detailed_summary_uses_more_context_and_tokens_than_medium():

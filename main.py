@@ -8,8 +8,23 @@ warnings.filterwarnings("ignore")
 import os
 import sys
 import gc
-import re
 from src.export_utils import export_last_answer_to_docx, export_text_to_docx
+from src.diagnostics import (
+    DiagnosticLLM,
+    export_last_trace_json,
+    finish_trace,
+    format_last_trace,
+    start_trace,
+)
+from src.summary_engine import (
+    _summary_generation_params,
+    _looks_like_history_topic,
+    generate_selected_section_summary,
+    generate_direct_topic_summary,
+    generate_planned_topic_summary,
+    generate_topic_summary,
+)
+
 
 from src.chat_utils import (
     is_greeting,
@@ -35,8 +50,8 @@ logging.getLogger("sentence_transformers").setLevel(logging.CRITICAL)
 logging.getLogger("huggingface_hub").setLevel(logging.CRITICAL)
 
 # Отключаем прокси для API
-os.environ["NO_PROXY"] = "localhost,127.0.0.1,api.groq.com,openrouter.ai"
-os.environ["no_proxy"] = "localhost,127.0.0.1,api.groq.com,openrouter.ai"
+os.environ["NO_PROXY"] = "localhost,127.0.0.1:2080,api.groq.com,openrouter.ai"
+os.environ["no_proxy"] = "localhost,127.0.0.1:2080,api.groq.com,openrouter.ai"
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -429,553 +444,30 @@ def on_export_summary_docx(summary_text, selected_file, selected_section, summar
         name_parts=[selected_file, selected_section, summary_type],
     )
 
-def _summary_generation_params(summary_type):
-    """Параметры поиска и генерации для разных размеров конспекта."""
-    summary_type = (summary_type or "").lower()
-    base_top_k = getattr(config, "SUMMARY_TOP_K", 40)
+def on_refresh_diagnostics():
+    """Показать последнюю диагностику генерации."""
+    return format_last_trace()
 
-    if "крат" in summary_type:
-        return {
-            "top_k": max(18, min(30, base_top_k)),
-            "group_size": 6,
-            "chunk_tokens": 700,
-            "final_tokens": 1800,
-        }
 
-    if "подроб" in summary_type:
-        return {
-            "top_k": max(80, base_top_k * 2),
-            "group_size": 6,
-            "chunk_tokens": 1200,
-            "final_tokens": 3600,
-        }
+def on_export_diagnostics_json():
+    """Экспортировать последнюю диагностику в JSON."""
+    return export_last_trace_json()
 
-    return {
-        "top_k": base_top_k,
-        "group_size": 5,
-        "chunk_tokens": 900,
-        "final_tokens": 2200,
-    }
-
-def generate_selected_section_summary(
-    kb,
-    llm,
-    selected_file,
-    section_filter,
-    topic,
-    summary_type,
-):
-    """
-    Быстрый конспект по выбранному разделу.
-
-    Если пользователь явно выбрал раздел, не делаем semantic search.
-    Берём только чанки этого раздела и конспектируем их напрямую.
-    """
-    params = _summary_generation_params(summary_type)
-
-    file_filter = "all" if selected_file == "Все файлы" else selected_file
-
-    chunks = kb.get_file_chunks(
-        file_filter=file_filter,
-        section_filter=section_filter,
-    )
-
-    if not chunks:
-        return (
-            "Информация по выбранному разделу не найдена.\n\n"
-            "Попробуйте:\n"
-            "• выбрать другой раздел;\n"
-            "• выбрать «Все разделы»;\n"
-            "• переиндексировать материал."
-        )
-
-    group_size = params["group_size"]
-    partial_summaries = []
-
-    for i in range(0, len(chunks), group_size):
-        group = chunks[i:i + group_size]
-
-        context_parts = []
-
-        for chunk in group:
-            section = chunk.get("section", "")
-            label = (
-                f'{chunk["source_file"]} | {section}'
-                if section
-                else chunk["source_file"]
-            )
-            context_parts.append(f"[{label}]\n{chunk['text']}")
-
-        context = "\n\n---\n\n".join(context_parts)
-
-        if topic:
-            prompt = config.PROMPTS["topic_summary_chunk"].format(
-                system=config.SYSTEM_PROMPT,
-                topic=topic,
-                context=context,
-            )
-        else:
-            prompt = config.PROMPTS["summary_chunk"].format(
-                system=config.SYSTEM_PROMPT,
-                context=context,
-            )
-
-        partial = llm.call(prompt, max_tokens=params["chunk_tokens"]).strip()
-
-        if partial and not partial.upper().startswith("НЕ ОТНОСИТСЯ"):
-            partial_summaries.append(partial)
-
-    if not partial_summaries:
-        return (
-            "Информация по указанной теме не найдена в выбранном разделе.\n\n"
-            "Попробуйте:\n"
-            "• убрать тему и сделать конспект всего раздела;\n"
-            "• выбрать другой раздел;\n"
-            "• выбрать «Все разделы»."
-        )
-
-    combined_context = "\n\n---\n\n".join(partial_summaries)
-
-    if topic:
-        final_prompt = config.PROMPTS["topic_summary_reduce"].format(
-            system=config.SYSTEM_PROMPT,
-            topic=topic,
-            context=combined_context,
-            summary_type=summary_type.lower(),
-        )
-    else:
-        final_prompt = config.PROMPTS["summary_reduce"].format(
-            system=config.SYSTEM_PROMPT,
-            context=combined_context,
-            summary_type=summary_type.lower(),
-        )
-
-    result = llm.call(final_prompt, max_tokens=params["final_tokens"])
-
-    header = (
-        f"Конспект по выбранному разделу\n"
-        f"Материал: {selected_file}\n"
-        f"Раздел: {section_filter}\n"
-        f"Тип: {summary_type.lower()}\n"
-    )
-
-    if topic:
-        header += f"Тема / период: {topic}\n"
-
-    header += f"Фрагментов раздела: {len(chunks)}\n\n"
-
-    return header + result
-
-def _clean_plan_line(line):
-    """Очищает строку плана от нумерации и мусора."""
-    line = str(line or "").strip()
-    line = re.sub(r"^\s*[\-\*\d\.\)\:]+\s*", "", line)
-    line = line.strip(" -—–•\t")
-    return line.strip()
-
-
-def build_topic_search_plan(llm, topic, summary_type, max_items=None):
-    """
-    Универсальный планировщик темы.
-
-    Не пишет конспект, а создаёт поисковые подпункты.
-    Работает для истории, сетей, математики, программирования и других дисциплин.
-    """
-    if max_items is None:
-        max_items = getattr(config, "PLANNED_SUMMARY_QUERIES", 7)
-
-    prompt = f"""{config.SYSTEM_PROMPT}
-
-ТЕМА ПОЛЬЗОВАТЕЛЯ:
-{topic}
-
-Задача:
-Разбей тему на {max_items} коротких поисковых подпунктов для поиска в учебных материалах.
-
-Важно:
-1. Не пиши конспект.
-2. Не добавляй факты от себя.
-3. Каждый подпункт должен быть коротким поисковым запросом.
-4. Подпункты должны покрывать тему с разных сторон.
-5. Если тема историческая — сохраняй хронологию.
-6. Если тема техническая — иди от основных понятий к деталям.
-7. Если тема математическая — выдели определения, свойства, формулы, методы и примеры.
-
-Формат:
-Каждый подпункт с новой строки.
-Без пояснений.
-
-ПОИСКОВЫЕ ПОДПУНКТЫ:"""
-
-    raw = llm.call(prompt, max_tokens=500)
-
-    lines = []
-    for line in raw.splitlines():
-        item = _clean_plan_line(line)
-        if not item:
-            continue
-        if len(item) < 4:
-            continue
-        if item.lower() in {"поисковые подпункты", "план", "ответ"}:
-            continue
-        lines.append(item)
-
-    # Убираем дубли, сохраняя порядок
-    unique = []
-    seen = set()
-
-    for item in lines:
-        key = item.lower()
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
-
-    # Fallback, если модель дала плохой план
-    if not unique:
-        unique = [topic]
-
-    # Всегда добавляем исходную тему первым запросом
-    if topic.lower() not in {x.lower() for x in unique}:
-        unique.insert(0, topic)
-
-    return unique[:max_items]
-
-
-def _dedupe_chunks(chunks):
-    """Убирает дубли найденных чанков."""
-    unique = []
-    seen = set()
-
-    for chunk in chunks:
-        text = chunk.get("text", "").strip()
-        if not text:
-            continue
-
-        key = text[:500].lower()
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-        unique.append(chunk)
-
-    return unique
-
-
-def _limit_chunks_per_section(chunks, max_per_section=None):
-    """
-    Не даёт одному разделу забить весь конспект.
-    Это важно для больших тем.
-    """
-    if max_per_section is None:
-        max_per_section = getattr(config, "PLANNED_SUMMARY_MAX_CHUNKS_PER_SECTION", 4)
-
-    result = []
-    section_counts = {}
-
-    for chunk in chunks:
-        section = chunk.get("section", "") or "Без раздела"
-        source_file = chunk.get("source_file", "")
-        key = (source_file, section)
-
-        count = section_counts.get(key, 0)
-
-        if count >= max_per_section:
-            continue
-
-        section_counts[key] = count + 1
-        result.append(chunk)
-
-    return result
-
-
-def _chunks_to_context(chunks):
-    """Собирает чанки в контекст для LLM."""
-    context_parts = []
-
-    for chunk in chunks:
-        section = chunk.get("section", "")
-        label = (
-            f'{chunk["source_file"]} | {section}'
-            if section
-            else chunk["source_file"]
-        )
-        context_parts.append(f"[{label}]\n{chunk['text']}")
-
-    return "\n\n---\n\n".join(context_parts)
-
-
-def retrieve_chunks_by_plan(kb, topic, plan, file_filter="all", section_filter=None):
-    """
-    Ищет чанки по нескольким подпунктам плана.
-    """
-    per_query = getattr(config, "PLANNED_SUMMARY_CHUNKS_PER_QUERY", 5)
-    max_chunks = getattr(config, "PLANNED_SUMMARY_MAX_CHUNKS", 40)
-
-    all_chunks = []
-
-    for item in plan:
-        query = f"{topic}. {item}"
-
-        chunks = kb.search_chunks_for_summary(
-            query=query,
-            file_filter=file_filter,
-            section_filter=section_filter,
-            top_k=per_query,
-        )
-
-        all_chunks.extend(chunks)
-
-    all_chunks = _dedupe_chunks(all_chunks)
-    all_chunks = _limit_chunks_per_section(all_chunks)
-
-    # Возвращаем в порядке документа, а не в порядке релевантности.
-    all_chunks.sort(
-        key=lambda x: (
-            x.get("source_file", ""),
-            int(x.get("chunk_id", 0)),
-        )
-    )
-
-    return all_chunks[:max_chunks]
-
-
-def generate_planned_topic_summary(
-    kb,
-    llm,
-    topic,
-    summary_type,
-    file_filter="all",
-    section_filter=None,
-):
-    """
-    Универсальный тематический конспект.
-
-    Подходит для широких тем:
-    - история России XX века;
-    - компьютерные сети;
-    - преобразование Лапласа;
-    - ООП;
-    - базы данных;
-    - медицина и т.д.
-
-    Вместо одного поиска:
-    тема → план → поиск по каждому пункту → сборка конспекта.
-    """
-    params = _summary_generation_params(summary_type)
-
-    plan = build_topic_search_plan(
-        llm=llm,
-        topic=topic,
-        summary_type=summary_type,
-        max_items=getattr(config, "PLANNED_SUMMARY_QUERIES", 7),
-    )
-
-    topic_chunks = retrieve_chunks_by_plan(
-        kb=kb,
-        topic=topic,
-        plan=plan,
-        file_filter=file_filter,
-        section_filter=section_filter,
-    )
-
-    if not topic_chunks:
-        return (
-            "Информация по указанной теме/периоду не найдена в выбранных материалах.\n\n"
-            "Попробуйте:\n"
-            "• выбрать другой файл;\n"
-            "• выбрать конкретный раздел;\n"
-            "• переформулировать тему."
-        )
-
-    group_size = params["group_size"]
-    partial_summaries = []
-
-    for i in range(0, len(topic_chunks), group_size):
-        group = topic_chunks[i:i + group_size]
-        context = _chunks_to_context(group)
-
-        prompt = f"""{config.SYSTEM_PROMPT}
-
-        ТЕМА:
-        {topic}
-
-        ФРАГМЕНТЫ УЧЕБНОГО МАТЕРИАЛА:
-        {context}
-
-        Задача:
-        Сделай промежуточный конспект по этим фрагментам в рамках указанной темы.
-
-        Важно:
-        1. Используй только данные из фрагментов.
-        2. Не добавляй факты от себя.
-        3. Если часть фрагментов слабо относится к теме, просто не используй её.
-        4. Не пиши "НЕ ОТНОСИТСЯ", если во фрагментах есть хотя бы немного полезной информации.
-        5. Пиши кратко, структурно, на русском языке.
-
-        ПРОМЕЖУТОЧНЫЙ КОНСПЕКТ:"""
-
-        partial = llm.call(
-            prompt,
-            max_tokens=params["chunk_tokens"],
-        ).strip()
-
-        if partial:
-            partial_summaries.append(partial)
-
-    if not partial_summaries:
-        return (
-            "Информация по указанной теме не найдена в выбранных материалах.\n\n"
-            "Попробуйте:\n"
-            "• выбрать конкретный раздел;\n"
-            "• выбрать другой файл;\n"
-            "• переформулировать тему."
-        )
-
-    combined_context = "\n\n---\n\n".join(partial_summaries)
-
-    final_prompt = f"""{config.SYSTEM_PROMPT}
-
-ТЕМА:
-{topic}
-
-ПОИСКОВЫЙ ПЛАН:
-{chr(10).join(f"- {item}" for item in plan)}
-
-ПРОМЕЖУТОЧНЫЕ КОНСПЕКТЫ:
-{combined_context}
-
-Задача:
-Составь {summary_type.lower()} итоговый тематический конспект.
-
-Инструкция:
-1. Используй только промежуточные конспекты.
-2. Сохрани структуру темы.
-3. Не добавляй факты от себя.
-4. Если какие-то пункты плана не раскрыты в найденных фрагментах, укажи это в конце.
-5. Для исторических тем сохраняй хронологический порядок.
-6. Для технических тем объясняй от общего к частному.
-7. Для математических тем выделяй определения, формулы, свойства и применение.
-8. В конце добавь короткий итог.
-
-ИТОГОВЫЙ КОНСПЕКТ:"""
-
-    result = llm.call(
-        final_prompt,
-        max_tokens=params["final_tokens"],
-    )
-
-    section_label = section_filter if section_filter else "Все разделы"
-
-    header = (
-        f"Тематический конспект\n"
-        f"Тема / период: {topic}\n"
-        f"Раздел: {section_label}\n"
-        f"Тип: {summary_type.lower()}\n"
-        f"Режим: плановый тематический конспект\n"
-        f"Пунктов плана: {len(plan)}\n"
-        f"Найдено фрагментов: {len(topic_chunks)}\n\n"
-        f"План поиска:\n"
-        + "\n".join(f"• {item}" for item in plan)
-        + "\n\n"
-    )
-
-    return header + result
-
-def generate_topic_summary(kb, llm, topic, summary_type, file_filter="all", section_filter=None):
-    """
-    Тематический конспект через semantic search + rerank.
-
-    Тема → HyDE → embedding → ChromaDB → rerank → лучшие чанки → map-reduce конспект.
-    """
-    params = _summary_generation_params(summary_type)
-    topic_chunks = kb.search_chunks_for_summary(
-        query=topic,
-        file_filter=file_filter,
-        section_filter=section_filter,
-        top_k=params["top_k"],
-    )
-
-    if not topic_chunks:
-        return (
-            "Информация по указанной теме/периоду не найдена в выбранных материалах.\n\n"
-            "Попробуйте:\n"
-            "• выбрать другой файл;\n"
-            "• выбрать «Все разделы»;\n"
-            "• указать тему иначе."
-        )
-
-    group_size = params["group_size"]
-    partial_summaries = []
-
-    for i in range(0, len(topic_chunks), group_size):
-        group = topic_chunks[i:i + group_size]
-
-        context_parts = []
-
-        for chunk in group:
-            section = chunk.get("section", "")
-            label = (
-                f'{chunk["source_file"]} | {section}'
-                if section
-                else chunk["source_file"]
-            )
-            context_parts.append(f"[{label}]\n{chunk['text']}")
-
-        context = "\n\n---\n\n".join(context_parts)
-
-        prompt = config.PROMPTS["topic_summary_chunk"].format(
-            system=config.SYSTEM_PROMPT,
-            topic=topic,
-            context=context,
-        )
-
-        partial_raw = llm.call(prompt, max_tokens=params["chunk_tokens"])
-        partial = partial_raw.strip()
-
-        partial_clean = partial.strip()
-        partial_upper = partial_clean.upper()
-
-        if partial_clean and not partial_upper.startswith("НЕ ОТНОСИТСЯ"):
-            partial_summaries.append(partial_clean)
-
-    if not partial_summaries:
-        return (
-            "Информация по указанной теме/периоду не найдена в выбранных материалах.\n\n"
-            "Попробуйте:\n"
-            "• указать тему иначе;\n"
-            "• выбрать другой файл;\n"
-            "• выбрать «Все разделы»."
-        )
-
-    combined_context = "\n\n---\n\n".join(partial_summaries)
-
-    final_prompt = config.PROMPTS["topic_summary_reduce"].format(
-        system=config.SYSTEM_PROMPT,
-        topic=topic,
-        context=combined_context,
-        summary_type=summary_type.lower(),
-    )
-
-    result = llm.call(final_prompt, max_tokens=params["final_tokens"])
-
-    section_label = section_filter if section_filter else "Все разделы"
-
-    header = (
-        f"Тематический конспект\n"
-        f"Тема / период: {topic}\n"
-        f"Раздел: {section_label}\n"
-        f"Тип: {summary_type.lower()}\n"
-        f"Найдено фрагментов: {len(topic_chunks)}\n\n"
-    )
-
-    return header + result
 
 def on_generate_summary(selected_file, selected_section, topic, summary_type):
     """Сгенерировать конспект по выбранному файлу через обработку чанков."""
+    start_trace(
+        kind="summary",
+        request={
+            "selected_file": selected_file,
+            "selected_section": selected_section,
+            "topic": topic,
+            "summary_type": summary_type,
+        },
+    )
     try:
         kb = _get_kb()
-        llm = _get_llm()
+        llm = DiagnosticLLM(_get_llm())
 
         file_filter = "all" if selected_file == "Все файлы" else selected_file
 
@@ -988,7 +480,7 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
         # Если пользователь явно выбрал раздел — работаем только с ним.
         # Это быстрее и точнее, чем semantic search по всему учебнику.
         if section_filter:
-            return generate_selected_section_summary(
+            result = generate_selected_section_summary(
                 kb=kb,
                 llm=llm,
                 selected_file=selected_file,
@@ -996,11 +488,17 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
                 topic=topic,
                 summary_type=summary_type,
             )
+            finish_trace(output=result)
+            return result
 
         # Если раздел не выбран, но тема указана — используем плановый тематический конспект.
         if topic:
-            if getattr(config, "PLANNED_SUMMARY_ENABLED", True):
-                return generate_planned_topic_summary(
+            summary_type_low = str(summary_type or "").lower()
+            if (
+                not _looks_like_history_topic(topic)
+                and ("крат" in summary_type_low or "сред" in summary_type_low)
+            ):
+                result = generate_direct_topic_summary(
                     kb=kb,
                     llm=llm,
                     topic=topic,
@@ -1008,8 +506,22 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
                     file_filter=file_filter,
                     section_filter=None,
                 )
+                finish_trace(output=result)
+                return result
 
-            return generate_topic_summary(
+            if getattr(config, "PLANNED_SUMMARY_ENABLED", True):
+                result = generate_planned_topic_summary(
+                    kb=kb,
+                    llm=llm,
+                    topic=topic,
+                    summary_type=summary_type,
+                    file_filter=file_filter,
+                    section_filter=None,
+                )
+                finish_trace(output=result)
+                return result
+
+            result = generate_topic_summary(
                 kb=kb,
                 llm=llm,
                 topic=topic,
@@ -1017,12 +529,16 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
                 file_filter=file_filter,
                 section_filter=None,
             )
+            finish_trace(output=result)
+            return result
 
         params = _summary_generation_params(summary_type)
         chunks = kb.get_file_chunks(file_filter=file_filter)
 
         if not chunks:
-            return "НЕТ ИНФОРМАЦИИ - база пуста или файл не проиндексирован."
+            result = "НЕТ ИНФОРМАЦИИ - база пуста или файл не проиндексирован."
+            finish_trace(output=result)
+            return result
 
         # Берём группы чанков, чтобы не перегружать модель.
         group_size = params["group_size"]
@@ -1071,10 +587,15 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
             f"Тип: {summary_type.lower()}\n\n"
         )
 
-        return header + summary
+        result = header + summary
+        finish_trace(output=result)
+        return result
 
     except Exception as e:
-        return f"Ошибка: {e}"
+        result = f"Ошибка: {e}"
+        finish_trace(output=result, error=e)
+        return result
+
 
 # Построение веб-интерфейса
 
@@ -1243,6 +764,24 @@ def build_gui():
                 book_idx_btn.click(on_index_books, None, book_out)
                 book_stats_btn.click(on_stats, None, book_out)
                 book_clr_btn.click(on_clear_kb, None, book_out)
+
+            # Вкладка "Диагностика"
+            with gr.TabItem("🧪 Диагностика"):
+                gr.Markdown("### Диагностика качества")
+                gr.Markdown(
+                    "Последний запуск: стратегия поиска, найденные фрагменты, LLM-вызовы и время."
+                )
+                diag_refresh = gr.Button("🔄 Обновить диагностику", size="sm")
+                diag_out = gr.Textbox(
+                    label="Последний запуск",
+                    lines=22,
+                )
+                with gr.Row():
+                    diag_export_btn = gr.Button("💾 Экспорт JSON", size="sm")
+                    diag_export_file = gr.File(label="Скачать JSON", visible=True)
+
+                diag_refresh.click(on_refresh_diagnostics, outputs=diag_out)
+                diag_export_btn.click(on_export_diagnostics_json, outputs=diag_export_file)
 
             # Вкладка "О системе"
             with gr.TabItem("⚙️ Система"):

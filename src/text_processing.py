@@ -117,6 +117,64 @@ def _is_header(line):
     return False
 
 
+def is_user_visible_section(line):
+    """
+    Строгая проверка заголовка для UI и навигации.
+
+    Более консервативна, чем общий детектор разделов:
+    пропускает главы/параграфы/подразделы и осмысленные тематические заголовки,
+    но отсекает формулы, библиографию, списки авторов и технический мусор PDF.
+    """
+    line = _normalize_line(line)
+
+    if not line:
+        return False
+
+    if _is_noise_header(line):
+        return False
+
+    if len(line) > 140:
+        return False
+
+    low = line.lower()
+
+    if re.search(r"[=<>]|https?://|www\.|/[A-Z]|\\", line):
+        return False
+
+    if re.search(r"\b[A-ZА-ЯЁ][A-Za-zА-Яа-яЁё\-]+,\s*[A-ZА-ЯЁ]\.", line):
+        return False
+
+    if line.count(",") >= 2 or line.count(";") >= 2:
+        return False
+
+    if re.match(r"^(ГЛАВА|Глава|глава)\s+\d{1,2}\s*[\.\-–:]?(?:\s+.{0,100})?$", line):
+        return True
+
+    if re.match(r"^§\s*\d{1,3}\s*[\.\-–:]?(?:\s+.{0,100})?$", line):
+        return True
+
+    if re.match(r"^(РАЗДЕЛ|Раздел|ЧАСТЬ|Часть)\s+[\dIVXLCDMivxlcdm]+.*$", line):
+        return True
+
+    if re.match(r"^\d+(?:\.\d+){1,3}\.?\s+.{4,100}$", line):
+        return True
+
+    if sum(ch.isdigit() for ch in line) >= 8 and "глава" not in low and "§" not in line:
+        return False
+
+    if re.match(r"^(ВВЕДЕНИЕ|ЗАКЛЮЧЕНИЕ|ПРЕДИСЛОВИЕ|ПРИЛОЖЕНИЕ)\b", line.upper()):
+        return True
+
+    letters = re.sub(r"[^А-Яа-яЁёA-Za-z]", "", line)
+    if len(letters) >= 8:
+        upper_ratio = sum(1 for ch in letters if ch.isupper()) / max(len(letters), 1)
+        word_count = len(re.findall(r"[А-ЯЁA-Z][А-ЯЁA-Z0-9\-]{1,}", line))
+        if upper_ratio > 0.88 and 1 <= word_count <= 8 and line.count(",") == 0:
+            return True
+
+    return False
+
+
 def detect_sections(text):
     """
     Разбивает текст на разделы по заголовкам.
@@ -134,7 +192,7 @@ def detect_sections(text):
     for line in lines:
         normalized = _normalize_line(line)
 
-        if _is_header(normalized):
+        if _is_header(normalized) and is_user_visible_section(normalized):
             if current_lines:
                 body = "\n".join(current_lines).strip()
                 if body:

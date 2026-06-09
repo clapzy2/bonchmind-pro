@@ -29,6 +29,12 @@ class _OllamaBackend:
         if "qwen3" in config.OLLAMA_MODEL.lower():
             prompt = "/no_think\n" + prompt
 
+        estimated_prompt_tokens = max(1, len(prompt) // 3)
+        num_ctx = min(
+            config.LLM_CONTEXT_SIZE,
+            max(4096, estimated_prompt_tokens + max_tokens + 1024),
+        )
+
         payload = {
             "model": config.OLLAMA_MODEL,
             "prompt": prompt,
@@ -37,6 +43,7 @@ class _OllamaBackend:
                 "temperature": temperature,
                 "top_p": config.LLM_TOP_P,
                 "num_predict": max_tokens,
+                "num_ctx": num_ctx,
                 "repeat_penalty": config.LLM_REPEAT_PENALTY,
                 "stop": ["<|im_end|>", "</s>"],
             },

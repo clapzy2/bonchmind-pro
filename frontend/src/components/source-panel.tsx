@@ -1,0 +1,193 @@
+"use client";
+
+import { BookOpenText, FileSearch, MessageSquareQuote, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+
+import type { SummaryResponse, SystemStatus, TraceChunk, TraceChunkGroup } from "@/lib/api";
+import type { WorkspaceSection } from "@/components/workspace-sections";
+
+type SourcePanelProps = {
+  activeSection: WorkspaceSection;
+  status: SystemStatus;
+  lastRun: SummaryResponse | null;
+};
+
+type CoverageCard = {
+  title: string;
+  meta: string;
+  detail: string;
+};
+
+function isChunkGroupArray(value: TraceChunk[] | TraceChunkGroup[] | undefined): value is TraceChunkGroup[] {
+  return Array.isArray(value) && value.length > 0 && "chunks" in value[0];
+}
+
+function buildCoverageCards(lastRun: SummaryResponse | null): CoverageCard[] {
+  const plannedGroups = lastRun?.trace?.chunks?.planned_chunk_groups;
+  if (!isChunkGroupArray(plannedGroups)) {
+    return [];
+  }
+
+  return plannedGroups.slice(0, 4).map((group) => {
+    const sections = Array.from(new Set(group.chunks.map((chunk) => chunk.section).filter(Boolean)));
+
+    return {
+      title: group.item || "Пункт плана",
+      meta: sections.slice(0, 2).join("; ") || "Без точных разделов",
+      detail: `${group.chunks.length} фрагм. поддерживают этот блок ответа.`,
+    };
+  });
+}
+
+const panelCopy: Record<WorkspaceSection, { eyebrow: string; title: string; body: string; icon: typeof Sparkles }> = {
+  summary: {
+    eyebrow: "Источники",
+    title: "Опора ответа",
+    body: "Здесь видно, чем подтвержден последний конспект.",
+    icon: FileSearch,
+  },
+  assistant: {
+    eyebrow: "Ассистент",
+    title: "Как лучше спрашивать",
+    body: "Короткие follow-up вопросы почти всегда сильнее одного длинного запроса.",
+    icon: MessageSquareQuote,
+  },
+  materials: {
+    eyebrow: "Материалы",
+    title: "Состояние библиотеки",
+    body: "Здесь важны готовность материалов и удобство навигации по ним.",
+    icon: BookOpenText,
+  },
+  quality: {
+    eyebrow: "Качество",
+    title: "Назначение экрана",
+    body: "Этот раздел нужен для проверки силы ответа, покрытия и слабых мест генерации.",
+    icon: ShieldCheck,
+  },
+  settings: {
+    eyebrow: "Настройки",
+    title: "Системный слой",
+    body: "Тут будут жить продуктовые и технические настройки станции.",
+    icon: Settings2,
+  },
+};
+
+export function SourcePanel({ activeSection, status, lastRun }: SourcePanelProps) {
+  const coverageCards = buildCoverageCards(lastRun);
+  const copy = panelCopy[activeSection];
+  const Icon = copy.icon;
+
+  if (activeSection === "summary") {
+    return (
+      <aside className="source-panel">
+        <div className="mb-5">
+          <div className="text-sm font-semibold accent">{copy.eyebrow}</div>
+          <h2 className="mt-1 text-lg font-bold">{copy.title}</h2>
+          <p className="mt-2 text-sm leading-6 muted">{copy.body}</p>
+        </div>
+
+        <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+          <div className="flex items-center gap-2">
+            <Icon className="text-[var(--source)]" size={16} />
+            <div className="text-sm font-semibold">Последняя тема</div>
+          </div>
+          <div className="mt-3 text-sm font-medium text-white">
+            {lastRun?.trace?.request?.topic || "Пока нет последнего запуска"}
+          </div>
+          <div className="mt-2 text-sm muted">
+            {coverageCards.length > 0
+              ? `Есть ${coverageCards.length} ключевых блока покрытия, которые можно быстро проверить глазами.`
+              : "После первой генерации здесь появятся разделы и фрагменты, которые поддержали конспект."}
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-3">
+          {coverageCards.length > 0 ? (
+            coverageCards.map((item) => (
+              <div key={item.title} className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+                <div className="text-sm font-semibold text-white">{item.title}</div>
+                <div className="mt-1 text-xs muted">{item.meta}</div>
+                <p className="mt-3 text-sm leading-6 text-slate-200">{item.detail}</p>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4 text-sm muted">
+              Этот блок станет полезным сразу после первого успешного конспекта.
+            </div>
+          )}
+        </div>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="source-panel">
+      <div className="mb-5">
+        <div className="text-sm font-semibold accent">{copy.eyebrow}</div>
+        <h2 className="mt-1 text-lg font-bold">{copy.title}</h2>
+        <p className="mt-2 text-sm leading-6 muted">{copy.body}</p>
+      </div>
+
+      <div className="space-y-3">
+        {activeSection === "assistant" ? (
+          <>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Лучший сценарий</div>
+              <p className="mt-3 text-sm leading-6 muted">
+                Сначала попросить объяснить тему, потом сузить вопрос, а затем при желании добить ответ цитатами.
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Что полезно после ответа</div>
+              <p className="mt-3 text-sm leading-6 muted">
+                Обычно следующий сильный ход: “упрости”, “сравни”, “дай только главное” или “покажи подтверждение”.
+              </p>
+            </div>
+          </>
+        ) : activeSection === "materials" ? (
+          <>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Материалов в базе</div>
+              <div className="mt-3 text-2xl font-bold text-white">{status.total_books}</div>
+              <p className="mt-2 text-sm leading-6 muted">Это общее число источников, которые уже доступны системе.</p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Фрагментов готово</div>
+              <div className="mt-3 text-2xl font-bold text-white">{status.total_chunks}</div>
+              <p className="mt-2 text-sm leading-6 muted">Эти куски текста уже можно использовать для поиска, конспектов и диалога.</p>
+            </div>
+          </>
+        ) : activeSection === "quality" ? (
+          <>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Что делает этот экран</div>
+              <p className="mt-3 text-sm leading-6 muted">
+                Он нужен не обычному пользователю для каждого действия, а тебе как владельцу продукта для проверки надежности ответа.
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Когда сюда идти</div>
+              <p className="mt-3 text-sm leading-6 muted">
+                Когда ответ кажется слабым, слишком общим, долго генерируется или опирается на малое число фрагментов.
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Сейчас</div>
+              <p className="mt-3 text-sm leading-6 muted">
+                Раздел настроек пока еще не полноценный: это будущая точка для моделей, режимов и системных переключателей.
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Дальше</div>
+              <p className="mt-3 text-sm leading-6 muted">
+                Сюда логично вынести только то, что реально полезно пользователю или тебе как администратору станции.
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </aside>
+  );
+}

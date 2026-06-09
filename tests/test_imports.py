@@ -16,10 +16,11 @@ def test_import_document_loader():
 
 
 def test_import_text_processing():
-    from src.text_processing import detect_sections, clean_sections, get_splitter
+    from src.text_processing import clean_sections, detect_sections, get_splitter, is_user_visible_section
     assert callable(detect_sections)
     assert callable(clean_sections)
     assert callable(get_splitter)
+    assert callable(is_user_visible_section)
 
 
 def test_import_chat_utils():

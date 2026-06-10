@@ -54,6 +54,9 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
         parsed.selectedFile &&
         (parsed.selectedFile === "Все материалы" || materialOptions.includes(parsed.selectedFile))
       ) {
+        // Restoring a saved preference once the material list is available is an
+        // external-system sync (localStorage), not derived render state.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setSelectedFile(parsed.selectedFile);
       }
       if (parsed.summaryType && summaryTypes.includes(parsed.summaryType)) {

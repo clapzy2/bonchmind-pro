@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookCopy,
   BookOpenText,
@@ -86,6 +86,11 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isAnyOperationRunning = isUploading || isDeleting || isReindexingMaterial || isReindexingLibrary;
 
+  const syncLibraryState = useCallback(async () => {
+    setSectionsCache({});
+    await onLibraryChange?.();
+  }, [onLibraryChange]);
+
   const filteredMaterials = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) {
@@ -95,11 +100,16 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
     return materials.filter((material) => material.name.toLowerCase().includes(normalized));
   }, [materials, query]);
 
+  const [prevFilteredMaterials, setPrevFilteredMaterials] = useState(filteredMaterials);
+
   const selectedMaterialInfo = materials.find((material) => material.name === selectedMaterial) ?? null;
   const sections = selectedMaterial ? (sectionsCache[selectedMaterial] ?? []) : [];
 
   useEffect(() => {
     if (!materials.length) {
+      // Clearing the selection when the library becomes empty is part of the
+      // localStorage-restore sync below, not derived render state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedMaterial("");
       return;
     }
@@ -180,15 +190,15 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
     };
   }, [sectionsCache, selectedMaterial]);
 
-  useEffect(() => {
-    if (!filteredMaterials.length) {
-      return;
-    }
-
-    if (!filteredMaterials.some((material) => material.name === selectedMaterial)) {
+  if (filteredMaterials !== prevFilteredMaterials) {
+    setPrevFilteredMaterials(filteredMaterials);
+    if (
+      filteredMaterials.length &&
+      !filteredMaterials.some((material) => material.name === selectedMaterial)
+    ) {
       setSelectedMaterial(filteredMaterials[0].name);
     }
-  }, [filteredMaterials, selectedMaterial]);
+  }
 
   useEffect(() => {
     const shouldPoll = isAnyOperationRunning;
@@ -249,12 +259,7 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
       setIsReindexingLibrary(false);
       setHasPendingSync(false);
     });
-  }, [hasPendingSync, isAnyOperationRunning, progressState]);
-
-  async function syncLibraryState() {
-    setSectionsCache({});
-    await onLibraryChange?.();
-  }
+  }, [hasPendingSync, isAnyOperationRunning, progressState, syncLibraryState]);
 
   async function handleUploadChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { getMaterials, getSystemStatus, type ApiHealth, type MaterialInfo, type SummaryResponse, type SystemStatus } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
@@ -41,16 +41,20 @@ function getVisibleMaterials(materials: MaterialInfo[]): MaterialInfo[] {
 export function AppShell({ health, materials, status }: AppShellProps) {
   const [lastRun, setLastRun] = useState<SummaryResponse | null>(null);
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("summary");
-  const [materialsState, setMaterialsState] = useState<MaterialInfo[]>(getVisibleMaterials(materials));
+  const [materialsState, setMaterialsState] = useState<MaterialInfo[]>(() => getVisibleMaterials(materials));
   const [statusState, setStatusState] = useState<SystemStatus>(status);
+  const [prevMaterials, setPrevMaterials] = useState(materials);
+  const [prevStatus, setPrevStatus] = useState(status);
 
-  useEffect(() => {
+  if (materials !== prevMaterials) {
+    setPrevMaterials(materials);
     setMaterialsState(getVisibleMaterials(materials));
-  }, [materials]);
+  }
 
-  useEffect(() => {
+  if (status !== prevStatus) {
+    setPrevStatus(status);
     setStatusState(status);
-  }, [status]);
+  }
 
   async function refreshLibraryState() {
     const [materialsResponse, nextStatus] = await Promise.all([getMaterials(), getSystemStatus()]);

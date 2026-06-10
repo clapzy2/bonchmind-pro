@@ -69,7 +69,14 @@ def login(
 
 
 @router.post("/logout", response_model=MessageResponse)
-def logout(response: Response) -> MessageResponse:
+def logout(
+    response: Response,
+    current_user: Annotated[User, Depends(auth_service.get_current_user)],
+) -> MessageResponse:
+    """Clear the auth cookie. Requires a valid session to prevent CSRF-style
+    cookie-clearing attacks on anonymous visitors and to give a clear
+    semantic: "this caller had a session and now does not"."""
+    del current_user  # only used for the auth gate
     auth_service.clear_auth_cookie(response)
     return MessageResponse(message="logged_out")
 

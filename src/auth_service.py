@@ -190,6 +190,23 @@ def get_current_user(
     return user
 
 
+def require_superuser(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """FastAPI dependency that allows only superusers through.
+
+    Used by admin-only endpoints (e.g. ``/api/diagnostics/*``). Regular users
+    that pass authentication get a 403, which is more informative than 401
+    and signals that the request was understood but the role is wrong.
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="superuser_required",
+        )
+    return current_user
+
+
 # ---------------------------------------------------------------------------
 # Convenience helpers for non-FastAPI callers (tests, scripts)
 # ---------------------------------------------------------------------------

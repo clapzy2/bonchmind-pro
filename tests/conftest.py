@@ -58,6 +58,54 @@ def api_client() -> Generator:
     Base.metadata.drop_all(bind=engine)
 
 
+@pytest.fixture()
+def authed_client(api_client):
+    """``api_client`` pre-authenticated as a freshly-registered regular user.
+
+    TestClient auto-replays cookies set by ``/api/auth/register``, so any
+    request issued through this fixture carries a valid session cookie.
+    """
+    api_client.post(
+        "/api/auth/register",
+        json={
+            "email": "tester@example.com",
+            "password": "testpassword123",
+            "display_name": "Tester",
+        },
+    )
+    return api_client
+
+
+@pytest.fixture()
+def superuser_client(api_client):
+    """``api_client`` pre-authenticated as a superuser.
+
+    Registers a normal user, then flips ``is_superuser=True`` directly via a
+    session — there is intentionally no public API for promoting users.
+    """
+    from src.db import SessionLocal
+    from src.db_models import User
+
+    api_client.post(
+        "/api/auth/register",
+        json={
+            "email": "admin@example.com",
+            "password": "adminpassword123",
+            "display_name": "Admin",
+        },
+    )
+
+    session = SessionLocal()
+    try:
+        user = session.query(User).filter(User.email == "admin@example.com").one()
+        user.is_superuser = True
+        session.commit()
+    finally:
+        session.close()
+
+    return api_client
+
+
 def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ARG001
     """Best-effort cleanup of the temporary SQLite file."""
     try:

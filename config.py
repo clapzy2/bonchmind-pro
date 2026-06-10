@@ -107,6 +107,15 @@ AUTH_COOKIE_NAME = "bonchmind_auth"
 # Set to True only when serving the frontend over HTTPS in production.
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
 
+# --- Multi-user foundation (Stage 2: workspace-scoped storage/index) -------
+#
+# Temporary bridge workspace id used by app_services.py/main.py until auth is
+# wired into the existing endpoints (Stage 3). All KnowledgeBase methods take
+# workspace_id as a keyword argument defaulting to this value, so existing
+# call sites keep working unchanged while ChromaDB metadata/where-filters and
+# on-disk paths (docs/<workspace_id>/...) are already workspace-scoped.
+DEFAULT_WORKSPACE_ID = "dev-default"
+
 
 def validate_config():
     """Проверяет базовые настройки проекта."""

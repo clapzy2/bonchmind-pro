@@ -25,6 +25,9 @@ docs_test/
 *.fb2
 *.fb2.zip
 
+# TypeScript build cache
+*.tsbuildinfo
+
 # IDE
 .idea/
 .vscode/

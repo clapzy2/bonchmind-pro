@@ -230,6 +230,28 @@ def test_export_summary_endpoint(monkeypatch):
     assert "application/vnd.openxmlformats-officedocument.wordprocessingml.document" in response.headers["content-type"]
 
 
+def test_export_summary_filename_uses_basename_not_backslash_split(monkeypatch, tmp_path):
+    """Ensure filename extraction works with forward-slash paths (Linux/macOS)."""
+    fake_file = tmp_path / "my_summary.docx"
+    fake_file.write_bytes(b"PK\x03\x04")
+    # Construct a forward-slash path to simulate Linux — old code split on "\\"
+    forward_slash_path = str(fake_file).replace("\\", "/")
+
+    monkeypatch.setattr(
+        api_app.services,
+        "export_summary_docx_service",
+        lambda request: forward_slash_path,
+    )
+
+    response = client.post(
+        "/api/exports/summary",
+        json={"text": "hello", "summary_type": "Средний"},
+    )
+
+    assert response.status_code == 200
+    assert "my_summary.docx" in response.headers.get("content-disposition", "")
+
+
 def test_export_summary_endpoint_returns_400_for_empty_summary(monkeypatch):
     monkeypatch.setattr(
         api_app.services,

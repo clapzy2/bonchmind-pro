@@ -138,6 +138,29 @@ def test_upload_material_service_saves_file_and_indexes(monkeypatch, tmp_path):
     assert (docs_dir / "book.pdf").read_bytes() == b"hello"
 
 
+def test_upload_rejects_file_exceeding_size_limit(monkeypatch, tmp_path):
+    docs_dir = tmp_path / "docs"
+    monkeypatch.setattr(app_services.config, "DOCS_DIR", str(docs_dir))
+    monkeypatch.setattr(app_services.config, "MAX_UPLOAD_BYTES", 10)
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: FakeKB())
+
+    response = app_services.upload_material_service("book.pdf", b"x" * 11)
+
+    assert response.ok is False
+    assert "слишком большой" in response.message.lower()
+
+
+def test_upload_rejects_unsupported_format(monkeypatch, tmp_path):
+    docs_dir = tmp_path / "docs"
+    monkeypatch.setattr(app_services.config, "DOCS_DIR", str(docs_dir))
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: FakeKB())
+
+    response = app_services.upload_material_service("virus.exe", b"payload")
+
+    assert response.ok is False
+    assert "формат" in response.message.lower()
+
+
 def test_delete_material_service_removes_file_and_index(monkeypatch, tmp_path):
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir()

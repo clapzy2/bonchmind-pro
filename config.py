@@ -83,6 +83,31 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 GUI_PORT  = 7860
 GUI_SHARE = False
 
+# --- Multi-user foundation (Stage 1: db + auth) ---------------------------
+#
+# Database URL is read from env so dev/CI can stay on SQLite while production
+# moves to Postgres without code changes. Tests provide their own URL via the
+# DATABASE_URL env var (see tests/conftest.py).
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(DATA_DIR, 'app.db')}")
+
+# JWT secret. Production MUST set JWT_SECRET_KEY in the environment; the dev
+# fallback below is only acceptable for local development and tests. The
+# fallback is intentionally obviously-non-secret so accidentally shipping it to
+# production is easy to notice in a security scan.
+JWT_SECRET_KEY = os.getenv(
+    "JWT_SECRET_KEY",
+    "dev-only-insecure-jwt-secret-change-me-in-production",
+)
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+# Access-token lifetime. Default: 7 days (60 * 24 * 7).
+JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", str(60 * 24 * 7)))
+
+# Cookie carrying the access token. HttpOnly + SameSite=Lax by default.
+AUTH_COOKIE_NAME = "bonchmind_auth"
+# Set to True only when serving the frontend over HTTPS in production.
+AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
+
+
 def validate_config():
     """Проверяет базовые настройки проекта."""
     errors = []

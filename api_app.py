@@ -6,6 +6,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from src import app_services as services
+from src.auth_api import router as auth_router
 from src.api_models import (
     ChatRequest,
     ChatResponse,
@@ -21,6 +22,7 @@ from src.api_models import (
 
 
 app = FastAPI(title="BonchMind Pro API", version="0.1.0")
+app.include_router(auth_router)
 
 
 @app.get("/api/health")

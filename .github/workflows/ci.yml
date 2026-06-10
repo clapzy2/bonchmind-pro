@@ -23,6 +23,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Verify Alembic migration applies cleanly
+        run: |
+          mkdir -p data
+          DATABASE_URL="sqlite:///./data/_ci_migration_check.db" python -m alembic upgrade head
+          rm -f data/_ci_migration_check.db
+
       - name: Run tests
         run: python -m pytest tests/ -q
 

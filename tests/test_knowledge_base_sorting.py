@@ -1,4 +1,5 @@
 from src.knowledge_base import KnowledgeBase
+from src import storage
 import config
 
 
@@ -23,22 +24,34 @@ def test_section_sort_key_keeps_paragraph_numbers_natural():
     ]
 
 
-def test_is_library_file_path_accepts_root_docs_file(tmp_path, monkeypatch):
+def test_is_library_file_path_accepts_workspace_docs_file(tmp_path, monkeypatch):
     docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
+    workspace_dir = docs_dir / "workspace-a"
+    workspace_dir.mkdir(parents=True)
     monkeypatch.setattr(config, "DOCS_DIR", str(docs_dir))
 
-    target = docs_dir / "book.pdf"
+    target = workspace_dir / "book.pdf"
 
-    assert KnowledgeBase._is_library_file_path(str(target)) is True
+    assert storage.is_workspace_library_path(str(target), "workspace-a") is True
 
 
 def test_is_library_file_path_rejects_internal_subdirectory_file(tmp_path, monkeypatch):
     docs_dir = tmp_path / "docs"
-    (docs_dir / "superpowers" / "specs").mkdir(parents=True)
+    (docs_dir / "workspace-a" / "specs").mkdir(parents=True)
     monkeypatch.setattr(config, "DOCS_DIR", str(docs_dir))
 
-    target = docs_dir / "superpowers" / "specs" / "design.md"
+    target = docs_dir / "workspace-a" / "specs" / "design.md"
 
-    assert KnowledgeBase._is_library_file_path(str(target)) is False
+    assert storage.is_workspace_library_path(str(target), "workspace-a") is False
+
+
+def test_is_library_file_path_rejects_other_workspace_file(tmp_path, monkeypatch):
+    docs_dir = tmp_path / "docs"
+    (docs_dir / "workspace-a").mkdir(parents=True)
+    (docs_dir / "workspace-b").mkdir(parents=True)
+    monkeypatch.setattr(config, "DOCS_DIR", str(docs_dir))
+
+    target = docs_dir / "workspace-b" / "book.pdf"
+
+    assert storage.is_workspace_library_path(str(target), "workspace-a") is False
 

@@ -5,7 +5,7 @@ from threading import Lock, Thread
 
 import config
 import main
-from src import runtime
+from src import runtime, storage
 from src.api_models import (
     ChatMessage,
     ChatRequest,
@@ -322,7 +322,7 @@ def _normalize_material_name(file_name):
 
 def _material_path(file_name):
     normalized_name = _normalize_material_name(file_name)
-    return os.path.join(config.DOCS_DIR, normalized_name)
+    return storage.document_stored_path(config.DEFAULT_WORKSPACE_ID, normalized_name)
 
 
 def upload_material_service(file_name, content):
@@ -347,7 +347,7 @@ def upload_material_service(file_name, content):
             material_name=normalized_name,
         )
 
-    os.makedirs(config.DOCS_DIR, exist_ok=True)
+    os.makedirs(storage.workspace_docs_dir(config.DEFAULT_WORKSPACE_ID), exist_ok=True)
 
     kb = runtime.get_kb()
     destination = _material_path(normalized_name)

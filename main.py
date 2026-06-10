@@ -57,6 +57,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import gradio as gr
 import config
+from src import storage
 from src.llm_engine import LLMEngine
 from src.knowledge_base import KnowledgeBase
 
@@ -120,11 +121,11 @@ def on_add_book(files):
     import shutil
     try:
         kb = _get_kb()
-        os.makedirs(config.DOCS_DIR, exist_ok=True)
+        os.makedirs(storage.workspace_docs_dir(config.DEFAULT_WORKSPACE_ID), exist_ok=True)
         results = []
         for file in files:
             src = file.name if hasattr(file, "name") else str(file)
-            dest = os.path.join(config.DOCS_DIR, os.path.basename(src))
+            dest = storage.document_stored_path(config.DEFAULT_WORKSPACE_ID, os.path.basename(src))
             shutil.copy2(src, dest)
             results.append(kb.add_book(dest))
         # gc.collect()

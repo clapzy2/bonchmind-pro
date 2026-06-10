@@ -8,7 +8,15 @@ def setup_function():
 
 
 class FakeKB:
-    def stats(self):
+    """Test double for KnowledgeBase.
+
+    Stage 2 makes ``workspace_id`` an optional keyword argument on every real
+    KnowledgeBase method (defaulting to ``config.DEFAULT_WORKSPACE_ID``). The
+    fakes accept and ignore it so they keep working whether or not callers
+    pass it explicitly.
+    """
+
+    def stats(self, workspace_id=None):
         return {
             "total_books": 2,
             "total_chunks": 10,
@@ -16,33 +24,33 @@ class FakeKB:
             "sections": ["Глава 1", "Глава 2"],
         }
 
-    def get_available_sections(self):
+    def get_available_sections(self, workspace_id=None):
         return ["Глава 1", "Глава 2"]
 
-    def get_sections_for_file(self, file_name):
+    def get_sections_for_file(self, file_name, workspace_id=None):
         mapping = {
             "a.pdf": ["Глава 1", "Глава 2"],
             "b.pdf": ["Введение"],
         }
         return mapping.get(file_name, [])
 
-    def get_file_profile(self, file_name):
+    def get_file_profile(self, file_name, workspace_id=None):
         mapping = {
             "a.pdf": {"chunk_count": 6, "sections_count": 2, "sections": ["Глава 1", "Глава 2"]},
             "b.pdf": {"chunk_count": 3, "sections_count": 1, "sections": ["Введение"]},
         }
         return mapping.get(file_name, {"chunk_count": 0, "sections_count": 0, "sections": []})
 
-    def remove_book(self, file_name):
+    def remove_book(self, file_name, workspace_id=None):
         return f"🗑️ {file_name}: удалено 3 фрагментов"
 
-    def add_book(self, file_path, progress_callback=None):
+    def add_book(self, file_path, workspace_id=None, progress_callback=None):
         return f"✅ {file_path}: добавлено 3 фрагментов"
 
-    def clear(self):
+    def clear(self, workspace_id=None):
         return "✅ База очищена"
 
-    def index_all_books(self, progress_callback=None):
+    def index_all_books(self, workspace_id=None, progress_callback=None):
         return "📚 Найдено файлов: 2"
 
 
@@ -69,7 +77,7 @@ def test_list_materials_maps_books_to_material_info(monkeypatch):
 
 def test_list_materials_keeps_plain_text_but_hides_empty_materials(monkeypatch):
     class MixedKB(FakeKB):
-        def stats(self):
+        def stats(self, workspace_id=None):
             return {
                 "total_books": 4,
                 "total_chunks": 10,
@@ -77,7 +85,7 @@ def test_list_materials_keeps_plain_text_but_hides_empty_materials(monkeypatch):
                 "sections": ["Глава 1", "Глава 2"],
             }
 
-        def get_file_profile(self, file_name):
+        def get_file_profile(self, file_name, workspace_id=None):
             mapping = {
                 "a.pdf": {"chunk_count": 6, "sections_count": 2, "sections": ["Глава 1", "Глава 2"]},
                 "story.txt": {"chunk_count": 2, "sections_count": 0, "sections": []},
@@ -114,7 +122,7 @@ def test_list_sections_normalizes_all_materials_label(monkeypatch):
     calls = []
 
     class TrackingKB(FakeKB):
-        def get_available_sections(self, file_filter="all"):
+        def get_available_sections(self, file_filter="all", workspace_id=None):
             calls.append(file_filter)
             return ["Глава 1"]
 
@@ -135,7 +143,7 @@ def test_upload_material_service_saves_file_and_indexes(monkeypatch, tmp_path):
 
     assert response.ok is True
     assert response.material_name == "book.pdf"
-    assert (docs_dir / "book.pdf").read_bytes() == b"hello"
+    assert (docs_dir / config.DEFAULT_WORKSPACE_ID / "book.pdf").read_bytes() == b"hello"
 
 
 def test_upload_rejects_file_exceeding_size_limit(monkeypatch, tmp_path):
@@ -163,8 +171,9 @@ def test_upload_rejects_unsupported_format(monkeypatch, tmp_path):
 
 def test_delete_material_service_removes_file_and_index(monkeypatch, tmp_path):
     docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
-    target = docs_dir / "book.pdf"
+    workspace_dir = docs_dir / config.DEFAULT_WORKSPACE_ID
+    workspace_dir.mkdir(parents=True)
+    target = workspace_dir / "book.pdf"
     target.write_text("hello", encoding="utf-8")
     monkeypatch.setattr(app_services.config, "DOCS_DIR", str(docs_dir))
     monkeypatch.setattr(app_services.runtime, "get_kb", lambda: FakeKB())
@@ -178,8 +187,9 @@ def test_delete_material_service_removes_file_and_index(monkeypatch, tmp_path):
 
 def test_reindex_material_service_rebuilds_single_file(monkeypatch, tmp_path):
     docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
-    target = docs_dir / "book.pdf"
+    workspace_dir = docs_dir / config.DEFAULT_WORKSPACE_ID
+    workspace_dir.mkdir(parents=True)
+    target = workspace_dir / "book.pdf"
     target.write_text("hello", encoding="utf-8")
     monkeypatch.setattr(app_services.config, "DOCS_DIR", str(docs_dir))
     monkeypatch.setattr(app_services.runtime, "get_kb", lambda: FakeKB())
@@ -209,7 +219,7 @@ def test_material_progress_defaults_to_idle():
 
 def test_upload_material_service_marks_progress_done(monkeypatch, tmp_path):
     class ProgressKB(FakeKB):
-        def add_book(self, file_path, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, progress_callback=None):
             if progress_callback:
                 progress_callback(phase="reading", progress=10, message="Читаю файл")
                 progress_callback(phase="indexing", progress=80, message="Сохраняю фрагменты")

@@ -76,6 +76,9 @@ SUPPORTED_FORMATS = [
     ".md", ".fb2", ".fb2.zip", ".html", ".htm", # добавить еще
 ]
 
+# Лимит загрузки (байт). По умолчанию 50 МБ.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
 # Веб-интерфейс
 GUI_PORT  = 7860
 GUI_SHARE = False

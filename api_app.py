@@ -1,5 +1,7 @@
 """FastAPI entrypoint for BonchMind Pro."""
 
+from pathlib import Path
+
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -86,7 +88,7 @@ def export_summary(request: SummaryExportRequest):
     return FileResponse(
         path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=path.split("\\")[-1],
+        filename=Path(path).name,
     )
 
 

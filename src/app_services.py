@@ -184,10 +184,7 @@ def list_sections(file_filter="all"):
     normalized_filter = _normalize_selected_file(file_filter)
 
     if normalized_filter == "Все файлы":
-        try:
-            sections = kb.get_available_sections(file_filter="all")
-        except TypeError:
-            sections = kb.get_available_sections()
+        sections = kb.get_available_sections()
     else:
         sections = kb.get_sections_for_file(normalized_filter)
 
@@ -278,17 +275,11 @@ def reset_material_progress_for_tests():
 
 
 def _kb_add_book(kb, file_path):
-    try:
-        return kb.add_book(file_path, progress_callback=_update_material_progress)
-    except TypeError:
-        return kb.add_book(file_path)
+    return kb.add_book(file_path, progress_callback=_update_material_progress)
 
 
 def _kb_index_all_books(kb):
-    try:
-        return kb.index_all_books(progress_callback=_update_material_progress)
-    except TypeError:
-        return kb.index_all_books()
+    return kb.index_all_books(progress_callback=_update_material_progress)
 
 
 def _launch_material_job(operation, message, target, material_name=""):
@@ -344,6 +335,15 @@ def upload_material_service(file_name, content):
         return MaterialActionResponse(
             ok=False,
             message=f"Формат не поддерживается. Разрешены: {', '.join(config.SUPPORTED_FORMATS)}",
+            material_name=normalized_name,
+        )
+
+    max_bytes = getattr(config, "MAX_UPLOAD_BYTES", 50 * 1024 * 1024)
+    if len(content) > max_bytes:
+        limit_mb = max_bytes // (1024 * 1024)
+        return MaterialActionResponse(
+            ok=False,
+            message=f"Файл слишком большой. Максимальный размер: {limit_mb} МБ.",
             material_name=normalized_name,
         )
 

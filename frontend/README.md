@@ -1,40 +1,54 @@
-# BonchMind Pro Frontend
+# BonchMind Frontend
 
-Next.js prototype for the future BonchMind Pro product interface.
+Это новый интерфейс BonchMind Pro на `Next.js`.
 
-## What This Is
+Он больше не является просто "прототипом оболочки". Сейчас это уже рабочий frontend для:
+- генерации конспектов;
+- диалога с ассистентом;
+- управления библиотекой материалов;
+- просмотра качества последнего запуска.
 
-This is the first React/Next.js app shell:
+---
 
-- left materials sidebar;
-- top backend/model status bar;
-- central summary workspace;
-- right source and diagnostics panel.
+## Что уже работает
 
-It uses the FastAPI backend through `/api/...` rewrites.
+- подключение к FastAPI backend через `/api/...`;
+- экран `Конспект` с генерацией и экспортом `.docx`;
+- экран `Ассистент` с режимами ответа;
+- экран `Материалы` с загрузкой, удалением и переиндексацией;
+- экран `Проверка качества`;
+- продуктовый layout с левой навигацией, центральной рабочей областью и правой вспомогательной панелью;
+- typecheck без ошибок.
 
-## Requirements
+---
 
-- Node.js with npm available in PATH.
-- BonchMind FastAPI backend running on `http://127.0.0.1:8000`.
+## Что еще в работе
 
-The Codex bundled Node runtime can read JavaScript files, but it does not provide a normal `npm` command in this workspace. Install regular Node.js locally if `npm -v` does not work in PowerShell.
+- дальнейшая полировка UX;
+- доведение `Настроек` до полноценного раздела;
+- разделение пользовательского и технического слоя;
+- более аккуратные состояния ошибок и долгих операций;
+- дальнейшее упрощение интерфейса для обычного пользователя.
 
-## Run Backend
+---
 
-From the project root:
+## Запуск
+
+### 1. Backend
+
+Из корня проекта:
 
 ```powershell
 python run_api.py
 ```
 
-Health check:
+Проверка:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
 
-Expected:
+Ожидаемый ответ:
 
 ```text
 status
@@ -42,47 +56,64 @@ status
 ok
 ```
 
-## Run Frontend
+### 2. Frontend
 
-From `frontend/`:
+Из папки `frontend/`:
 
 ```powershell
 npm install
 npm run dev
 ```
 
-Open:
+Открыть:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-## API Proxy
+---
 
-`next.config.ts` proxies frontend calls:
+## Node.js
+
+Нужен обычный локальный Node.js с `npm` в `PATH`.
+
+Проверка:
+
+```powershell
+node -v
+npm -v
+```
+
+---
+
+## Proxy до backend
+
+`next.config.ts` проксирует запросы:
 
 ```text
 /api/* -> http://127.0.0.1:8000/api/*
 ```
 
-Override backend URL:
+При необходимости можно переопределить backend URL:
 
 ```powershell
 $env:BONCHMIND_API_URL="http://127.0.0.1:8000"
 npm run dev
 ```
 
-## Current Scope
+---
 
-Included:
+## Проверка
 
-- product dashboard layout;
-- API health/status/materials integration;
-- offline fallback state.
+```powershell
+npm run typecheck
+```
 
-Not included yet:
+---
 
-- posting summary generation from React;
-- streaming progress;
-- source cards from real diagnostics;
-- upload/indexing UI.
+## Что важно помнить
+
+- часть UX еще активно шлифуется;
+- dev-сервер Next.js нужно перезапускать после изменений `next.config.ts`;
+- первый ответ backend может быть медленнее из-за прогрева моделей;
+- некоторые материалы могут индексироваться как `plain_text`, если у них нет нормальной структуры разделов.

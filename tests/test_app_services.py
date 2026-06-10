@@ -16,7 +16,7 @@ class FakeKB:
             "sections": ["Глава 1", "Глава 2"],
         }
 
-    def get_available_sections(self, file_filter="all"):
+    def get_available_sections(self):
         return ["Глава 1", "Глава 2"]
 
     def get_sections_for_file(self, file_name):
@@ -36,13 +36,13 @@ class FakeKB:
     def remove_book(self, file_name):
         return f"🗑️ {file_name}: удалено 3 фрагментов"
 
-    def add_book(self, file_path):
+    def add_book(self, file_path, progress_callback=None):
         return f"✅ {file_path}: добавлено 3 фрагментов"
 
     def clear(self):
         return "✅ База очищена"
 
-    def index_all_books(self):
+    def index_all_books(self, progress_callback=None):
         return "📚 Найдено файлов: 2"
 
 

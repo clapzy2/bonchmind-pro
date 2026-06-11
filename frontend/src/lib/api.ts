@@ -356,8 +356,9 @@ export async function reindexLibrary(): Promise<MaterialActionResponse> {
 }
 
 export async function generateSummary(request: SummaryRequest): Promise<SummaryResponse> {
+  let response: Response;
   try {
-    const response = await fetch("/api/summaries", {
+    response = await fetch("/api/summaries", {
       method: "POST",
       credentials: "include",
       headers: {
@@ -366,28 +367,22 @@ export async function generateSummary(request: SummaryRequest): Promise<SummaryR
       },
       body: JSON.stringify(request),
     });
-
-    if (response.status === 401) {
-      return {
-        text: "Войдите в систему, чтобы сгенерировать конспект.",
-        diagnostics: "",
-      };
-    }
-
-    if (!response.ok) {
-      return {
-        text: `Ошибка API: ${response.status}`,
-        diagnostics: "",
-      };
-    }
-
-    return (await response.json()) as SummaryResponse;
   } catch {
+    // Network-level failure (backend down, DNS, …). Soft-render an offline
+    // message in the same shape as a normal response so the workspace UI
+    // can show the warning without crashing.
     return {
       text: "Backend недоступен. Запустите python run_api.py и повторите запрос.",
       diagnostics: "",
     };
   }
+
+  // 401 means the cookie is missing/expired — bubble up to the workspace so
+  // it can redirect to /login (Stage 5e). Keeping a soft fallback here would
+  // hide auth failures behind a user-facing string and diverge from chat /
+  // materials behaviour.
+  ensureResponseOk(response, "Summary");
+  return (await response.json()) as SummaryResponse;
 }
 
 export async function exportSummaryDocx(request: SummaryExportRequest): Promise<Blob> {

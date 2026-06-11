@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Download, FileText, Loader2, Play, Search, Sparkles } from "lucide-react";
 
 import type { MaterialInfo, SummaryResponse, TraceChunkGroup } from "@/lib/api";
 import { exportSummaryDocx, generateSummary } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
+import { handleAuthError } from "@/lib/handle-auth-error";
 
 type SummaryWorkspaceProps = {
   materials: MaterialInfo[];
@@ -25,6 +27,7 @@ function isChunkGroupArray(value: unknown): value is TraceChunkGroup[] {
 }
 
 export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps) {
+  const router = useRouter();
   const materialOptions = useMemo(() => ["Все материалы", ...materials.map((material) => material.name)], [materials]);
 
   const [selectedFile, setSelectedFile] = useState(materialOptions[0] ?? "Все материалы");
@@ -94,22 +97,31 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
       tone: "info",
       text: "BonchMind собирает релевантные фрагменты и готовит конспект.",
     });
-    const response = await generateSummary({
-      selected_file: selectedFile,
-      selected_section: "Все разделы",
-      topic: normalizedTopic,
-      summary_type: summaryType,
-    });
-    setResult(response);
-    onResult?.(response);
-    setNotice({
-      tone: response.trace?.status === "ok" ? "success" : "warning",
-      text:
-        response.trace?.status === "ok"
-          ? "Конспект готов. Можно проверить источники или экспортировать DOCX."
-          : "Генерация завершилась с предупреждением. Проверьте диагностику и источники.",
-    });
-    setIsLoading(false);
+    try {
+      const response = await generateSummary({
+        selected_file: selectedFile,
+        selected_section: "Все разделы",
+        topic: normalizedTopic,
+        summary_type: summaryType,
+      });
+      setResult(response);
+      onResult?.(response);
+      setNotice({
+        tone: response.trace?.status === "ok" ? "success" : "warning",
+        text:
+          response.trace?.status === "ok"
+            ? "Конспект готов. Можно проверить источники или экспортировать DOCX."
+            : "Генерация завершилась с предупреждением. Проверьте диагностику и источники.",
+      });
+    } catch (err) {
+      if (handleAuthError(err, router)) return;
+      setNotice({
+        tone: "warning",
+        text: "Не удалось сгенерировать конспект. Проверьте backend и повторите попытку.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   async function handleExport() {
@@ -140,6 +152,7 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
         text: "DOCX подготовлен и отправлен в загрузки браузера.",
       });
     } catch (error) {
+      if (handleAuthError(error, router)) return;
       const message =
         error instanceof Error && error.message.includes("404")
           ? "Экспорт еще не подключился на backend. Перезапустите python run_api.py и повторите."

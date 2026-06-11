@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowUpRight, BadgeCheck, BookOpenText, Bot, Loader2, MessageSquareQuote, Send, Sparkles } from "lucide-react";
 
 import type { ChatMessage, ChatResponse, MaterialInfo } from "@/lib/api";
 import { sendChatMessage } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
+import { handleAuthError } from "@/lib/handle-auth-error";
 
 type AssistantWorkspaceProps = {
   materials: MaterialInfo[];
@@ -49,6 +51,7 @@ type Notice = {
 };
 
 export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
+  const router = useRouter();
   const materialOptions = useMemo(() => ["Все материалы", ...materials.map((material) => material.name)], [materials]);
 
   const [selectedFile, setSelectedFile] = useState(materialOptions[0] ?? "Все материалы");
@@ -139,6 +142,7 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
             : "Ответ получен с предупреждением. Лучше проверить источники и диагностику.",
       });
     } catch (error) {
+      if (handleAuthError(error, router)) return;
       setNotice({
         tone: "warning",
         text:

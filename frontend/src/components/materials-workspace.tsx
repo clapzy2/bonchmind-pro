@@ -1,6 +1,7 @@
 "use client";
 
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   BookCopy,
   BookOpenText,
@@ -26,6 +27,7 @@ import {
   type MaterialProgressResponse,
   type SystemStatus,
 } from "@/lib/api";
+import { handleAuthError } from "@/lib/handle-auth-error";
 
 type MaterialsWorkspaceProps = {
   materials: MaterialInfo[];
@@ -72,6 +74,7 @@ function getMaterialBadge(label: string) {
 }
 
 export function MaterialsWorkspace({ materials, status, onLibraryChange }: MaterialsWorkspaceProps) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [selectedMaterial, setSelectedMaterial] = useState(materials[0]?.name ?? "");
   const [sectionsCache, setSectionsCache] = useState<Record<string, string[]>>({});
@@ -299,8 +302,14 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
           text: response.message,
         });
         setProgressState(await getMaterialProgress());
+        // Intentionally do NOT clear isUploading here — uploadMaterial returns
+        // as soon as the backend kicks off the background indexing job; the
+        // polling effect needs isUploading=true to keep calling
+        // /api/materials/progress until the job flips active=false. The
+        // finalize effect then resets isUploading and refreshes the library.
       }
-    } catch {
+    } catch (err) {
+      if (handleAuthError(err, router)) return;
       setNotice({
         tone: "warning",
         text: "Не удалось загрузить материал. Проверьте backend и повторите попытку.",
@@ -314,8 +323,11 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
         current_file: file.name,
         error: "upload_failed",
       });
-    } finally {
       setIsUploading(false);
+      setHasPendingSync(false);
+    } finally {
+      // Reset the file input only — keep isUploading until the background
+      // indexing job actually finishes (see comment above).
       event.target.value = "";
     }
   }
@@ -364,7 +376,8 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
         });
         setProgressState(await getMaterialProgress());
       }
-    } catch {
+    } catch (err) {
+      if (handleAuthError(err, router)) return;
       setNotice({
         tone: "warning",
         text: "Не удалось удалить материал. Попробуйте еще раз после проверки backend.",
@@ -419,7 +432,8 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
         });
         setProgressState(await getMaterialProgress());
       }
-    } catch {
+    } catch (err) {
+      if (handleAuthError(err, router)) return;
       setNotice({
         tone: "warning",
         text: "Не удалось переиндексировать материал.",
@@ -473,7 +487,8 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
         });
         setProgressState(await getMaterialProgress());
       }
-    } catch {
+    } catch (err) {
+      if (handleAuthError(err, router)) return;
       setNotice({
         tone: "warning",
         text: "Не удалось переиндексировать библиотеку целиком.",

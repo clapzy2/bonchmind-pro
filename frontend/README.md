@@ -13,6 +13,7 @@
 ## Что уже работает
 
 - подключение к FastAPI backend через `/api/...`;
+- аутентификация (Stage 5): регистрация, вход, выход, защита `/`;
 - экран `Конспект` с генерацией и экспортом `.docx`;
 - экран `Ассистент` с режимами ответа;
 - экран `Материалы` с загрузкой, удалением и переиндексацией;
@@ -117,3 +118,31 @@ npm run typecheck
 - dev-сервер Next.js нужно перезапускать после изменений `next.config.ts`;
 - первый ответ backend может быть медленнее из-за прогрева моделей;
 - некоторые материалы могут индексироваться как `plain_text`, если у них нет нормальной структуры разделов.
+
+---
+
+## Аутентификация (Stage 5)
+
+Frontend защищает все рабочие экраны через FastAPI-сессию из Stage 1:
+
+- регистрация: `http://127.0.0.1:3000/register` (email + пароль ≥ 8 символов; имя необязательно). Сразу после регистрации backend ставит HttpOnly cookie, и frontend ведёт на `/` без второго входа.
+- вход: `http://127.0.0.1:3000/login`.
+- выход: кнопка «Выйти» в правом верхнем углу (`Topbar`). Чистит cookie на backend и редиректит на `/login`.
+- `/` (рабочая область) защищён `<AuthProvider>` + `useAuth()` хуком: анонимный посетитель сразу уходит на `/login`, валидная сессия видит splash на момент загрузки и затем `AppShell` со своими материалами.
+- `getMe()` пробрасывает `null` для анонимного состояния и не выбрасывает ошибку — это «нормальный» поток, не «упало».
+
+Access-токен (`access_token` из ответа `/api/auth/{register,login}`) **намеренно** нигде во frontend не сохраняется. Авторизация целиком держится на HttpOnly cookie `bonchmind_auth`, которую backend сам ставит и читает. Все `fetch` используют `credentials: "include"`.
+
+Что делать с 401 от защищённого endpoint-а:
+
+- `api.ts` бросает `UnauthorizedError` (для login — `InvalidCredentialsError`, для register-conflict — `EmailConflictError`);
+- Workspace-компоненты (Materials / Summary / Assistant) ловят `UnauthorizedError` через `handleAuthError(err, router)` и редиректят на `/login`;
+- Splash + `AuthProvider` повторно зовут `getMe()`; если сессии нет, попадаем на `/login` ещё до рендера AppShell.
+
+### Workspace модель
+
+У каждого пользователя один personal workspace (Stage 1-инвариант, см. `design/multi-user-architecture.md`). Frontend **не делает выбор workspace вручную** — backend на каждый запрос подставляет `current_user.personal_workspace.id`, а Topbar показывает его имя как read-only текст рядом с пользователем.
+
+### Legacy Gradio UI
+
+Старый Gradio-интерфейс (`python main.py`) пока остаётся доступен — он работает на отдельном порту и шарит ту же `data/app.db` / Chroma. Auth там нет: Gradio привязан к `config.DEFAULT_WORKSPACE_ID` через `gr.State`. Полное снятие Gradio + удаление `DEFAULT_WORKSPACE_ID` — отдельный sub-step Stage 5 или Stage 6, после parity-check Next.js UI против Gradio.

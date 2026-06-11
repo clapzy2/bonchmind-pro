@@ -166,8 +166,7 @@ function apiUrl(path: string): string {
 
 /**
  * Raised by action-style calls (upload, delete, chat, …) when the backend
- * returns 401. Lets UI components show "пожалуйста, войдите" instead of a
- * generic crash. Stage 5 will wire a real redirect to /login.
+ * returns 401. UI catches it and redirects to /login (Stage 5).
  */
 export class UnauthorizedError extends Error {
   constructor(message = "Войдите в систему, чтобы продолжить.") {
@@ -175,6 +174,74 @@ export class UnauthorizedError extends Error {
     this.name = "UnauthorizedError";
   }
 }
+
+/**
+ * Raised by ``loginUser`` when the backend rejects credentials with 401.
+ * Distinct from ``UnauthorizedError`` so the login form can show "неверный
+ * email или пароль" without triggering a redirect (we're already on /login).
+ */
+export class InvalidCredentialsError extends Error {
+  constructor(message = "Неверный email или пароль.") {
+    super(message);
+    this.name = "InvalidCredentialsError";
+  }
+}
+
+/**
+ * Raised by ``registerUser`` when the backend returns 409 because the email
+ * is already taken. Lets the register form show a targeted hint instead of
+ * a generic error.
+ */
+export class EmailConflictError extends Error {
+  constructor(message = "Этот email уже зарегистрирован.") {
+    super(message);
+    this.name = "EmailConflictError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auth wire types — mirror of ``src/auth_models.py``
+// ---------------------------------------------------------------------------
+
+export type WorkspaceOut = {
+  id: string;
+  name: string;
+  plan: string;
+  /** ISO timestamp from the backend. */
+  created_at: string;
+};
+
+export type UserOut = {
+  id: string;
+  email: string;
+  display_name: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  /** ISO timestamp from the backend. */
+  created_at: string;
+  personal_workspace: WorkspaceOut;
+};
+
+export type AuthResponse = {
+  access_token: string;
+  token_type: string;
+  user: UserOut;
+};
+
+export type MessageResponse = {
+  message: string;
+};
+
+export type RegisterPayload = {
+  email: string;
+  password: string;
+  display_name?: string;
+};
+
+export type LoginPayload = {
+  email: string;
+  password: string;
+};
 
 async function fetchJson<T>(path: string, fallback: T): Promise<T> {
   try {
@@ -289,8 +356,9 @@ export async function reindexLibrary(): Promise<MaterialActionResponse> {
 }
 
 export async function generateSummary(request: SummaryRequest): Promise<SummaryResponse> {
+  let response: Response;
   try {
-    const response = await fetch("/api/summaries", {
+    response = await fetch("/api/summaries", {
       method: "POST",
       credentials: "include",
       headers: {
@@ -299,28 +367,22 @@ export async function generateSummary(request: SummaryRequest): Promise<SummaryR
       },
       body: JSON.stringify(request),
     });
-
-    if (response.status === 401) {
-      return {
-        text: "Войдите в систему, чтобы сгенерировать конспект.",
-        diagnostics: "",
-      };
-    }
-
-    if (!response.ok) {
-      return {
-        text: `Ошибка API: ${response.status}`,
-        diagnostics: "",
-      };
-    }
-
-    return (await response.json()) as SummaryResponse;
   } catch {
+    // Network-level failure (backend down, DNS, …). Soft-render an offline
+    // message in the same shape as a normal response so the workspace UI
+    // can show the warning without crashing.
     return {
       text: "Backend недоступен. Запустите python run_api.py и повторите запрос.",
       diagnostics: "",
     };
   }
+
+  // 401 means the cookie is missing/expired — bubble up to the workspace so
+  // it can redirect to /login (Stage 5e). Keeping a soft fallback here would
+  // hide auth failures behind a user-facing string and diverge from chat /
+  // materials behaviour.
+  ensureResponseOk(response, "Summary");
+  return (await response.json()) as SummaryResponse;
 }
 
 export async function exportSummaryDocx(request: SummaryExportRequest): Promise<Blob> {
@@ -351,4 +413,117 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
 
   ensureResponseOk(response, "Chat");
   return (await response.json()) as ChatResponse;
+}
+
+// ---------------------------------------------------------------------------
+// Auth API
+// ---------------------------------------------------------------------------
+
+/**
+ * Register a new user. The backend sets the auth cookie on success, so the
+ * caller is logged in immediately and the next request to a protected
+ * endpoint already carries the session.
+ *
+ * Throws ``EmailConflictError`` on 409, generic ``Error`` on other failures.
+ */
+export async function registerUser(payload: RegisterPayload): Promise<UserOut> {
+  const response = await fetch(apiUrl("/api/auth/register"), {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.status === 409) {
+    throw new EmailConflictError();
+  }
+  if (!response.ok) {
+    throw new Error(`Register failed: ${response.status}`);
+  }
+
+  const data = (await response.json()) as AuthResponse;
+  return data.user;
+}
+
+/**
+ * Authenticate with email + password. Backend sets the auth cookie on
+ * success.
+ *
+ * Throws ``InvalidCredentialsError`` on 401, generic ``Error`` on other
+ * failures.
+ */
+export async function loginUser(payload: LoginPayload): Promise<UserOut> {
+  const response = await fetch(apiUrl("/api/auth/login"), {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.status === 401) {
+    throw new InvalidCredentialsError();
+  }
+  if (!response.ok) {
+    throw new Error(`Login failed: ${response.status}`);
+  }
+
+  const data = (await response.json()) as AuthResponse;
+  return data.user;
+}
+
+/**
+ * Clear the auth cookie on the backend. Backend requires an authenticated
+ * session (to prevent CSRF-style cookie-clearing on anonymous visitors), so
+ * an anonymous caller gets ``UnauthorizedError``.
+ */
+export async function logoutUser(): Promise<void> {
+  const response = await fetch(apiUrl("/api/auth/logout"), {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (response.status === 401) {
+    throw new UnauthorizedError();
+  }
+  if (!response.ok) {
+    throw new Error(`Logout failed: ${response.status}`);
+  }
+}
+
+/**
+ * Return the currently-authenticated user, or ``null`` if the session is
+ * missing/expired. Designed for the auth context bootstrap — it must not
+ * throw on the "not logged in" path because that's the normal anonymous
+ * state.
+ */
+export async function getMe(): Promise<UserOut | null> {
+  try {
+    const response = await fetch(apiUrl("/api/auth/me"), {
+      cache: "no-store",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (response.status === 401) {
+      return null;
+    }
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as UserOut;
+  } catch {
+    return null;
+  }
 }

@@ -746,3 +746,66 @@ test on Stage 3 is signed off.
   ChromaDB errors during `remove_chunks` so a transient failure does not
   block the SQL delete. A maintenance task (Stage 6) should periodically
   scan for chunks whose `document_id` no longer exists and drop them.
+
+---
+
+## Stage 5 — frontend auth UI (in flight)
+
+The Next.js frontend grew its own auth surface on top of the Stage 1
+backend endpoints. No backend changes; this stage is entirely under
+`frontend/`.
+
+What landed:
+
+* `frontend/src/lib/api.ts` — auth wire types (`UserOut`, `WorkspaceOut`,
+  `AuthResponse`, `MessageResponse`) + `registerUser` / `loginUser` /
+  `logoutUser` / `getMe`. Typed errors: `UnauthorizedError`,
+  `InvalidCredentialsError`, `EmailConflictError`. All requests use
+  relative `/api/...` paths via `apiUrl()` so the Next dev-server
+  rewrites + `credentials: "include"` keep the cookie flow stable. The
+  soft 401 fallback in `generateSummary` is gone — 401 is consistent
+  across summary / chat / materials / export.
+* `frontend/src/lib/auth-context.tsx` + `frontend/src/app/providers.tsx`
+  — `<AuthProvider>` owns the `{ user, loading, login, register,
+  logout, refresh }` state. `Providers` is a `"use client"` wrapper so
+  `layout.tsx` stays a server component and keeps its static metadata.
+* `frontend/src/app/login/page.tsx`, `frontend/src/app/register/page.tsx`
+  + `frontend/src/components/auth-form.tsx` — login / register routes.
+  After register the backend has already set the cookie, so the
+  frontend goes straight to `/` (auto-login). The pages also bail to
+  `/` if the bootstrap probe already finds a session, so a logged-in
+  user never sees the form.
+* `frontend/src/app/page.tsx` — rewritten as a client component gated
+  on `useAuth()`. Splash while bootstrapping, redirect to `/login` if
+  anonymous, client-side fetch of `getHealth` / `getSystemStatus` /
+  `getMaterials` once authenticated. A 401 raised mid-fetch also
+  redirects to `/login`.
+* `frontend/src/components/topbar.tsx` — user widget + "Выйти" button
+  on the right, alongside the existing online/offline pill. Workspace
+  name is shown as read-only text (one workspace per user — Stage 1
+  invariant).
+* `frontend/src/lib/handle-auth-error.ts` + catches in
+  `materials-workspace.tsx`, `summary-workspace.tsx`,
+  `assistant-workspace.tsx` — every workspace component now bounces to
+  `/login` on `UnauthorizedError` instead of flashing a "не удалось"
+  warning.
+* Access tokens are intentionally **never** stored in JS. The whole UI
+  relies on the HttpOnly `bonchmind_auth` cookie.
+
+Out of scope for Stage 5, tracked here:
+
+* **Drop Gradio (`main.py`) + `DEFAULT_WORKSPACE_ID`** — parity-check
+  the Next.js UI against the Gradio screens first; once the new UI
+  covers the practical workflows, remove the Gradio entrypoint and the
+  remaining method defaults that read `config.DEFAULT_WORKSPACE_ID`.
+  Standalone sub-step at the end of Stage 5 or its own Stage 6 ticket.
+* **Frontend test framework** (vitest / playwright) — gating today is
+  `npm run typecheck` + `npm run lint` + backend `pytest` + manual
+  smoke. Adding component / e2e tests for the auth flow is a separate
+  ticket.
+* **Refresh token rotation / explicit session-expiry UX** — the JWT
+  lives 7 days; on 401 the UI redirects to `/login`. Anything more
+  proactive (toast "сессия истекает через 5 минут", silent refresh)
+  comes later.
+* **Password reset / email verification / multi-workspace switching /
+  admin diagnostics UI** — not in Stage 5's stated goals.

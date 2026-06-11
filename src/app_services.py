@@ -1,4 +1,26 @@
-"""UI-neutral service functions for BonchMind."""
+"""UI-neutral service functions for BonchMind.
+
+Stage 3b makes every service function take ``workspace_id`` as its first
+argument; ``api_app`` resolves it from ``current_user.personal_workspace.id``
+via the ``get_current_workspace_id`` dependency, so the authenticated request
+flow no longer touches ``config.DEFAULT_WORKSPACE_ID``.
+
+Two pieces stay shared on purpose:
+
+* ``runtime.get_kb()`` returns one ``KnowledgeBase`` instance for the whole
+  process — Chroma scopes data by ``workspace_id`` metadata, not by separate
+  collections, so a single client is correct.
+* ``_material_job_lock`` is a single global lock. It serialises background
+  uploads/deletes across the instance, which is fine for the current
+  single-node deployment. Per-workspace progress *state* is kept separate
+  (``_material_progress_states`` keyed by ``workspace_id``) so a caller can
+  never see another workspace's filename, progress percent or error.
+
+Summary generation still bridges through ``main._kb`` / ``main.on_generate_summary``
+without an explicit ``workspace_id`` — ``summary_engine.py`` still uses
+``config.DEFAULT_WORKSPACE_ID`` for its KB calls. Threading ``workspace_id``
+through the summary path is intentionally deferred to Stage 4.
+"""
 
 import os
 from threading import Lock, Thread
@@ -40,10 +62,14 @@ from src.export_utils import export_text_to_docx
 
 
 ALL_FILES_LABELS = {"Все файлы", "Все материалы", "all", ""}
+
+# Single lock so two upload/delete/reindex jobs don't race against the
+# vector index. State is per-workspace (see ``_material_progress_states``).
 _progress_lock = Lock()
 _material_job_lock = Lock()
 _material_job_thread = None
-_material_progress_state = {
+
+_IDLE_PROGRESS_STATE = {
     "active": False,
     "operation": "idle",
     "phase": "",
@@ -52,6 +78,7 @@ _material_progress_state = {
     "current_file": "",
     "error": "",
 }
+_material_progress_states: dict[str, dict] = {}
 
 
 def _normalize_selected_file(selected_file):
@@ -125,9 +152,9 @@ def _build_followup_suggestions(message, answer_mode, has_sources):
     return cleaned[:3]
 
 
-def get_system_status():
+def get_system_status(workspace_id: str):
     kb = runtime.get_kb()
-    stats = kb.stats()
+    stats = kb.stats(workspace_id=workspace_id)
 
     mode = config.LLM_MODE
     model = config.API_MODEL if mode == "api" else config.OLLAMA_MODEL
@@ -154,13 +181,13 @@ def _material_quality(sections_count, chunk_count):
     return "plain_text", "Сплошной текст без явных разделов: хорош для чтения и диалога, слабее для навигации."
 
 
-def list_materials():
+def list_materials(workspace_id: str):
     kb = runtime.get_kb()
-    stats = kb.stats()
+    stats = kb.stats(workspace_id=workspace_id)
 
     materials = []
     for book in stats.get("books", []):
-        profile = kb.get_file_profile(book)
+        profile = kb.get_file_profile(book, workspace_id=workspace_id)
         sections_count = int(profile.get("sections_count", 0) or 0)
         chunk_count = int(profile.get("chunk_count", 0) or 0)
         quality_label, quality_reason = _material_quality(sections_count, chunk_count)
@@ -179,25 +206,40 @@ def list_materials():
     return MaterialsResponse(materials=materials)
 
 
-def list_sections(file_filter="all"):
+def list_sections(workspace_id: str, file_filter: str = "all"):
     kb = runtime.get_kb()
     normalized_filter = _normalize_selected_file(file_filter)
 
     if normalized_filter == "Все файлы":
-        sections = kb.get_available_sections()
+        sections = kb.get_available_sections(workspace_id=workspace_id)
     else:
-        sections = kb.get_sections_for_file(normalized_filter)
+        sections = kb.get_sections_for_file(normalized_filter, workspace_id=workspace_id)
 
     return SectionsResponse(sections=sections)
 
 
-def _set_material_progress(**updates):
+# ---------------------------------------------------------------------------
+# Material upload / delete / reindex — per-workspace progress
+# ---------------------------------------------------------------------------
+
+
+def _get_workspace_progress_snapshot(workspace_id: str) -> dict:
+    """Return a copy of ``workspace_id``'s progress state (idle if missing)."""
     with _progress_lock:
-        _material_progress_state.update(updates)
+        return dict(_material_progress_states.get(workspace_id, _IDLE_PROGRESS_STATE))
 
 
-def _start_material_progress(operation, message="", current_file=""):
+def _set_material_progress(workspace_id: str, **updates) -> None:
+    with _progress_lock:
+        state = _material_progress_states.setdefault(
+            workspace_id, dict(_IDLE_PROGRESS_STATE)
+        )
+        state.update(updates)
+
+
+def _start_material_progress(workspace_id, operation, message="", current_file=""):
     _set_material_progress(
+        workspace_id,
         active=True,
         operation=operation,
         phase="starting",
@@ -208,8 +250,9 @@ def _start_material_progress(operation, message="", current_file=""):
     )
 
 
-def _queue_material_progress(operation, message="", current_file=""):
+def _queue_material_progress(workspace_id, operation, message="", current_file=""):
     _set_material_progress(
+        workspace_id,
         active=True,
         operation=operation,
         phase="queued",
@@ -220,7 +263,7 @@ def _queue_material_progress(operation, message="", current_file=""):
     )
 
 
-def _update_material_progress(phase="", progress=None, message=None, current_file=None):
+def _update_material_progress(workspace_id, phase="", progress=None, message=None, current_file=None):
     payload = {}
     if phase is not None:
         payload["phase"] = phase
@@ -230,11 +273,12 @@ def _update_material_progress(phase="", progress=None, message=None, current_fil
         payload["message"] = message
     if current_file is not None:
         payload["current_file"] = current_file
-    _set_material_progress(**payload)
+    _set_material_progress(workspace_id, **payload)
 
 
-def _finish_material_progress(message="", current_file=""):
+def _finish_material_progress(workspace_id, message="", current_file=""):
     _set_material_progress(
+        workspace_id,
         active=False,
         operation="idle",
         phase="done",
@@ -245,8 +289,9 @@ def _finish_material_progress(message="", current_file=""):
     )
 
 
-def _fail_material_progress(message="", current_file=""):
+def _fail_material_progress(workspace_id, message="", current_file=""):
     _set_material_progress(
+        workspace_id,
         active=False,
         operation="idle",
         phase="error",
@@ -257,36 +302,35 @@ def _fail_material_progress(message="", current_file=""):
     )
 
 
-def get_material_progress():
-    with _progress_lock:
-        return MaterialProgressResponse(**_material_progress_state)
+def get_material_progress(workspace_id: str) -> MaterialProgressResponse:
+    return MaterialProgressResponse(**_get_workspace_progress_snapshot(workspace_id))
 
 
 def reset_material_progress_for_tests():
-    _set_material_progress(
-        active=False,
-        operation="idle",
-        phase="",
-        message="",
-        progress=0,
-        current_file="",
-        error="",
+    with _progress_lock:
+        _material_progress_states.clear()
+
+
+def _kb_add_book(workspace_id, kb, file_path):
+    return kb.add_book(
+        file_path,
+        workspace_id=workspace_id,
+        progress_callback=lambda **payload: _update_material_progress(workspace_id, **payload),
     )
 
 
-def _kb_add_book(kb, file_path):
-    return kb.add_book(file_path, progress_callback=_update_material_progress)
+def _kb_index_all_books(workspace_id, kb):
+    return kb.index_all_books(
+        workspace_id=workspace_id,
+        progress_callback=lambda **payload: _update_material_progress(workspace_id, **payload),
+    )
 
 
-def _kb_index_all_books(kb):
-    return kb.index_all_books(progress_callback=_update_material_progress)
-
-
-def _launch_material_job(operation, message, target, material_name=""):
+def _launch_material_job(workspace_id, operation, message, target, material_name=""):
     global _material_job_thread
 
     with _material_job_lock:
-        current = get_material_progress()
+        current = get_material_progress(workspace_id)
         if current.active:
             return MaterialActionResponse(
                 ok=False,
@@ -295,6 +339,7 @@ def _launch_material_job(operation, message, target, material_name=""):
             )
 
         _queue_material_progress(
+            workspace_id,
             operation=operation,
             message=message,
             current_file=material_name,
@@ -304,7 +349,7 @@ def _launch_material_job(operation, message, target, material_name=""):
             try:
                 target()
             except Exception as error:
-                _fail_material_progress(str(error), current_file=material_name)
+                _fail_material_progress(workspace_id, str(error), current_file=material_name)
 
         _material_job_thread = Thread(target=runner, daemon=True)
         _material_job_thread.start()
@@ -320,12 +365,12 @@ def _normalize_material_name(file_name):
     return os.path.basename(str(file_name or "")).strip()
 
 
-def _material_path(file_name):
+def _material_path(workspace_id: str, file_name: str) -> str:
     normalized_name = _normalize_material_name(file_name)
-    return storage.document_stored_path(config.DEFAULT_WORKSPACE_ID, normalized_name)
+    return storage.document_stored_path(workspace_id, normalized_name)
 
 
-def upload_material_service(file_name, content):
+def upload_material_service(workspace_id: str, file_name, content):
     normalized_name = _normalize_material_name(file_name)
     if not normalized_name:
         return MaterialActionResponse(ok=False, message="Не выбран файл для загрузки.")
@@ -347,12 +392,13 @@ def upload_material_service(file_name, content):
             material_name=normalized_name,
         )
 
-    os.makedirs(storage.workspace_docs_dir(config.DEFAULT_WORKSPACE_ID), exist_ok=True)
+    os.makedirs(storage.workspace_docs_dir(workspace_id), exist_ok=True)
 
     kb = runtime.get_kb()
-    destination = _material_path(normalized_name)
+    destination = _material_path(workspace_id, normalized_name)
     existed_before = os.path.exists(destination)
     _start_material_progress(
+        workspace_id,
         operation="upload",
         message=f"Готовлю загрузку {normalized_name}",
         current_file=normalized_name,
@@ -362,6 +408,7 @@ def upload_material_service(file_name, content):
         with open(destination, "wb") as output_file:
             output_file.write(content)
         _update_material_progress(
+            workspace_id,
             phase="saving",
             progress=10,
             message=f"Файл {normalized_name} сохранен в библиотеку",
@@ -369,15 +416,16 @@ def upload_material_service(file_name, content):
         )
 
         if existed_before:
-            kb.remove_book(normalized_name)
+            kb.remove_book(normalized_name, workspace_id=workspace_id)
             _update_material_progress(
+                workspace_id,
                 phase="cleanup",
                 progress=18,
                 message="Убираю старую версию материала из индекса",
                 current_file=normalized_name,
             )
 
-        result = _kb_add_book(kb, destination)
+        result = _kb_add_book(workspace_id, kb, destination)
         ok = str(result).startswith("✅") or str(result).startswith("⏭️")
         if not ok and os.path.exists(destination):
             try:
@@ -387,11 +435,12 @@ def upload_material_service(file_name, content):
 
         if ok:
             _finish_material_progress(
+                workspace_id,
                 message=f"{normalized_name} готов к поиску и конспектам",
                 current_file=normalized_name,
             )
         else:
-            _fail_material_progress(result, current_file=normalized_name)
+            _fail_material_progress(workspace_id, result, current_file=normalized_name)
 
         return MaterialActionResponse(
             ok=ok,
@@ -399,35 +448,38 @@ def upload_material_service(file_name, content):
             material_name=normalized_name,
         )
     except Exception as error:
-        _fail_material_progress(str(error), current_file=normalized_name)
+        _fail_material_progress(workspace_id, str(error), current_file=normalized_name)
         raise
 
 
-def start_upload_material_service(file_name, content):
+def start_upload_material_service(workspace_id: str, file_name, content):
     normalized_name = _normalize_material_name(file_name)
     return _launch_material_job(
+        workspace_id,
         operation="upload",
         message=f"Запустил загрузку и индексацию {normalized_name}",
         material_name=normalized_name,
-        target=lambda: upload_material_service(file_name, content),
+        target=lambda: upload_material_service(workspace_id, file_name, content),
     )
 
 
-def delete_material_service(file_name):
+def delete_material_service(workspace_id: str, file_name):
     normalized_name = _normalize_material_name(file_name)
     if not normalized_name:
         return MaterialActionResponse(ok=False, message="Материал не указан.")
 
     kb = runtime.get_kb()
-    file_path = _material_path(normalized_name)
+    file_path = _material_path(workspace_id, normalized_name)
     existed_on_disk = os.path.exists(file_path)
     _start_material_progress(
+        workspace_id,
         operation="delete",
         message=f"Удаляю {normalized_name} из библиотеки",
         current_file=normalized_name,
     )
-    remove_message = kb.remove_book(normalized_name)
+    remove_message = kb.remove_book(normalized_name, workspace_id=workspace_id)
     _update_material_progress(
+        workspace_id,
         phase="cleanup",
         progress=60,
         message="Удаляю фрагменты из индекса",
@@ -439,7 +491,11 @@ def delete_material_service(file_name):
 
     ok = existed_on_disk or "удалено" in remove_message.lower()
     if not ok:
-        _fail_material_progress(f"{normalized_name} не найден в библиотеке.", current_file=normalized_name)
+        _fail_material_progress(
+            workspace_id,
+            f"{normalized_name} не найден в библиотеке.",
+            current_file=normalized_name,
+        )
         return MaterialActionResponse(
             ok=False,
             message=f"{normalized_name} не найден в библиотеке.",
@@ -447,6 +503,7 @@ def delete_material_service(file_name):
         )
 
     _finish_material_progress(
+        workspace_id,
         message=f"{normalized_name} удален из библиотеки",
         current_file=normalized_name,
     )
@@ -457,22 +514,23 @@ def delete_material_service(file_name):
     )
 
 
-def start_delete_material_service(file_name):
+def start_delete_material_service(workspace_id: str, file_name):
     normalized_name = _normalize_material_name(file_name)
     return _launch_material_job(
+        workspace_id,
         operation="delete",
         message=f"Запустил удаление {normalized_name}",
         material_name=normalized_name,
-        target=lambda: delete_material_service(file_name),
+        target=lambda: delete_material_service(workspace_id, file_name),
     )
 
 
-def reindex_material_service(file_name=None):
+def reindex_material_service(workspace_id: str, file_name=None):
     kb = runtime.get_kb()
 
     normalized_name = _normalize_material_name(file_name)
     if normalized_name:
-        file_path = _material_path(normalized_name)
+        file_path = _material_path(workspace_id, normalized_name)
         if not os.path.exists(file_path):
             return MaterialActionResponse(
                 ok=False,
@@ -481,26 +539,29 @@ def reindex_material_service(file_name=None):
             )
 
         _start_material_progress(
+            workspace_id,
             operation="reindex_material",
             message=f"Переиндексирую {normalized_name}",
             current_file=normalized_name,
         )
-        kb.remove_book(normalized_name)
+        kb.remove_book(normalized_name, workspace_id=workspace_id)
         _update_material_progress(
+            workspace_id,
             phase="cleanup",
             progress=15,
             message="Снимаю старые фрагменты материала",
             current_file=normalized_name,
         )
-        result = _kb_add_book(kb, file_path)
+        result = _kb_add_book(workspace_id, kb, file_path)
         ok = str(result).startswith("✅") or str(result).startswith("⏭️")
         if ok:
             _finish_material_progress(
+                workspace_id,
                 message=f"{normalized_name} переиндексирован",
                 current_file=normalized_name,
             )
         else:
-            _fail_material_progress(result, current_file=normalized_name)
+            _fail_material_progress(workspace_id, result, current_file=normalized_name)
         return MaterialActionResponse(
             ok=ok,
             message=result,
@@ -508,24 +569,26 @@ def reindex_material_service(file_name=None):
         )
 
     _start_material_progress(
+        workspace_id,
         operation="reindex_library",
         message="Полностью пересобираю библиотеку",
     )
-    result = kb.clear()
+    result = kb.clear(workspace_id=workspace_id)
     _update_material_progress(
+        workspace_id,
         phase="cleanup",
         progress=5,
         message="Очищаю текущий индекс",
     )
-    index_result = _kb_index_all_books(kb)
-    _finish_material_progress(message="Библиотека полностью переиндексирована")
+    index_result = _kb_index_all_books(workspace_id, kb)
+    _finish_material_progress(workspace_id, message="Библиотека полностью переиндексирована")
     return MaterialActionResponse(
         ok=True,
         message=f"{result}\n{index_result}",
     )
 
 
-def start_reindex_material_service(file_name=None):
+def start_reindex_material_service(workspace_id: str, file_name=None):
     normalized_name = _normalize_material_name(file_name)
     operation = "reindex_material" if normalized_name else "reindex_library"
     title = (
@@ -534,17 +597,27 @@ def start_reindex_material_service(file_name=None):
         else "Запустил полную пересборку библиотеки"
     )
     return _launch_material_job(
+        workspace_id,
         operation=operation,
         message=title,
         material_name=normalized_name,
-        target=lambda: reindex_material_service(file_name),
+        target=lambda: reindex_material_service(workspace_id, file_name),
     )
 
 
-def generate_summary_service(request: SummaryRequest):
-    # The legacy Gradio handler keeps its own module-level singletons. The API
-    # layer owns runtime initialization, so we bridge them to avoid loading the
-    # embedding model a second time on the first summary request.
+def generate_summary_service(workspace_id: str, request: SummaryRequest):
+    """Generate a summary using the legacy Gradio handler.
+
+    Stage 3b limitation: ``summary_engine.py`` still resolves the workspace
+    through the KB method defaults (``config.DEFAULT_WORKSPACE_ID``), so this
+    request will read from the dev/legacy workspace, not ``workspace_id``.
+    Stage 4 plumbs ``workspace_id`` through the summary path end-to-end.
+
+    The argument is accepted now so the API signature stays consistent and
+    the Stage 4 change becomes a service-layer-only fix.
+    """
+    del workspace_id  # accepted for API symmetry; consumed in Stage 4.
+
     main._llm = runtime.get_llm()
     main._kb = runtime.get_kb()
 
@@ -607,7 +680,7 @@ def _group_chat_sources(sources, selected_file, limit=4):
     return result
 
 
-def chat_service(request: ChatRequest):
+def chat_service(workspace_id: str, request: ChatRequest):
     message = str(request.message or "").strip()
     selected_file = _normalize_selected_file(request.selected_file)
     history = [ChatMessage(role=item.role, content=item.content) for item in (request.history or [])]
@@ -668,11 +741,12 @@ def chat_service(request: ChatRequest):
         if prev_question:
             search_query = prev_question
 
-    section_filter = kb.find_section_in_query(message)
+    section_filter = kb.find_section_in_query(message, workspace_id=workspace_id)
     context, raw_sources = kb.search_with_sources(
         search_query,
         file_filter=file_filter,
         section_filter=section_filter,
+        workspace_id=workspace_id,
     )
 
     grouped_sources = _group_chat_sources(raw_sources, selected_file=selected_file)

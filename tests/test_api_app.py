@@ -163,7 +163,7 @@ def test_system_status_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "get_system_status",
-        lambda: SystemStatus(
+        lambda workspace_id: SystemStatus(
             llm_mode="ollama",
             model="qwen2.5:14b",
             embedding_model="BAAI/bge-m3",
@@ -185,7 +185,7 @@ def test_materials_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "list_materials",
-        lambda: MaterialsResponse(materials=[]),
+        lambda workspace_id: MaterialsResponse(materials=[]),
     )
 
     response = authed_client.get("/api/materials")
@@ -198,7 +198,7 @@ def test_material_upload_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "start_upload_material_service",
-        lambda file_name, content: MaterialActionResponse(
+        lambda workspace_id, file_name, content: MaterialActionResponse(
             ok=True,
             message=f"uploaded:{file_name}:{len(content)}",
             material_name=file_name,
@@ -219,7 +219,7 @@ def test_material_progress_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "get_material_progress",
-        lambda: MaterialProgressResponse(
+        lambda workspace_id: MaterialProgressResponse(
             active=True,
             operation="upload",
             phase="indexing",
@@ -241,7 +241,7 @@ def test_sections_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "list_sections",
-        lambda file_filter="all": SectionsResponse(sections=["Глава 1"]),
+        lambda workspace_id, file_filter="all": SectionsResponse(sections=["Глава 1"]),
     )
 
     response = authed_client.get("/api/materials/a.pdf/sections")
@@ -254,7 +254,7 @@ def test_material_reindex_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "start_reindex_material_service",
-        lambda file_name=None: MaterialActionResponse(
+        lambda workspace_id, file_name=None: MaterialActionResponse(
             ok=True,
             message=f"reindex:{file_name or 'all'}",
             material_name=file_name or "",
@@ -271,7 +271,7 @@ def test_library_reindex_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "start_reindex_material_service",
-        lambda file_name=None: MaterialActionResponse(
+        lambda workspace_id, file_name=None: MaterialActionResponse(
             ok=True,
             message="reindex:all",
             material_name="",
@@ -288,7 +288,7 @@ def test_material_delete_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "start_delete_material_service",
-        lambda file_name: MaterialActionResponse(
+        lambda workspace_id, file_name: MaterialActionResponse(
             ok=True,
             message=f"deleted:{file_name}",
             material_name=file_name,
@@ -305,7 +305,7 @@ def test_summary_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "generate_summary_service",
-        lambda request: SummaryResponse(
+        lambda workspace_id, request: SummaryResponse(
             text=f"summary:{request.topic}",
             diagnostics="trace",
             trace={"status": "ok"},
@@ -327,7 +327,7 @@ def test_chat_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "chat_service",
-        lambda request: ChatResponse(
+        lambda workspace_id, request: ChatResponse(
             answer=f"answer:{request.message}",
             summary="короткий итог",
             confidence_label="high",
@@ -409,3 +409,154 @@ def test_export_summary_endpoint_returns_400_for_empty_summary(
 
     assert response.status_code == 400
     assert response.json() == {"error": "empty_summary"}
+
+
+# ---------------------------------------------------------------------------
+# Stage 3b: workspace_id sourced from the caller's session
+# ---------------------------------------------------------------------------
+
+
+def test_endpoints_pass_callers_personal_workspace_id(authed_client, monkeypatch):
+    """Every service-layer call should receive the authenticated user's
+    ``personal_workspace.id`` — never a value from the URL or request body.
+
+    Spying on each service stub catches a future regression where someone
+    accidentally hard-codes ``config.DEFAULT_WORKSPACE_ID`` or accepts a
+    ``workspace_id`` from the request body.
+    """
+    expected = authed_client.get("/api/auth/me").json()["personal_workspace"]["id"]
+    captured: dict[str, str] = {}
+
+    def _capture(name):
+        def stub(workspace_id, *args, **kwargs):
+            captured[name] = workspace_id
+            return _stub_return_for(name, *args, **kwargs)
+        return stub
+
+    def _stub_return_for(name, *args, **kwargs):
+        if name == "get_system_status":
+            return SystemStatus(
+                llm_mode="ollama",
+                model="m",
+                embedding_model="e",
+                reranker_model="r",
+                chunk_size=1,
+                hyde_enabled=False,
+                total_books=0,
+                total_chunks=0,
+            )
+        if name == "list_materials":
+            return MaterialsResponse(materials=[])
+        if name == "list_sections":
+            return SectionsResponse(sections=[])
+        if name == "get_material_progress":
+            return MaterialProgressResponse()
+        if name in {
+            "start_upload_material_service",
+            "start_delete_material_service",
+            "start_reindex_material_service",
+        }:
+            return MaterialActionResponse(ok=True, message="", material_name="")
+        if name == "generate_summary_service":
+            return SummaryResponse(text="", diagnostics="")
+        if name == "chat_service":
+            return ChatResponse(answer="")
+        raise AssertionError(f"no stub for {name}")
+
+    for service_name in [
+        "get_system_status",
+        "list_materials",
+        "list_sections",
+        "get_material_progress",
+        "start_upload_material_service",
+        "start_delete_material_service",
+        "start_reindex_material_service",
+        "generate_summary_service",
+        "chat_service",
+    ]:
+        monkeypatch.setattr(api_app.services, service_name, _capture(service_name))
+
+    authed_client.get("/api/system/status")
+    authed_client.get("/api/materials")
+    authed_client.get("/api/materials/a.pdf/sections")
+    authed_client.get("/api/materials/progress")
+    authed_client.post(
+        "/api/materials/upload",
+        files={"file": ("book.pdf", b"hello", "application/pdf")},
+    )
+    authed_client.delete("/api/materials/a.pdf")
+    authed_client.post("/api/materials/reindex")
+    authed_client.post(
+        "/api/summaries",
+        json={"topic": "Bluetooth", "summary_type": "Средний"},
+    )
+    authed_client.post(
+        "/api/chat",
+        json={"message": "hi", "answer_mode": "Обычный"},
+    )
+
+    for service_name, received_id in captured.items():
+        assert received_id == expected, (
+            f"{service_name} received workspace_id={received_id!r}, "
+            f"expected {expected!r}"
+        )
+
+
+def test_material_progress_endpoint_does_not_leak_other_workspaces(api_client):
+    """Stage 3b invariant: a user must never see another workspace's progress.
+
+    Alice has an active upload; Bob logs in and queries the progress
+    endpoint. The response must be the idle default — no filename, no
+    percent, no error from Alice's job.
+    """
+    from src import app_services
+
+    # 1. Register Alice and stash her workspace id.
+    api_client.post(
+        "/api/auth/register",
+        json={
+            "email": "alice-leak-test@example.com",
+            "password": "alicepassword12",
+            "display_name": "Alice",
+        },
+    )
+    alice_workspace_id = (
+        api_client.get("/api/auth/me").json()["personal_workspace"]["id"]
+    )
+
+    # 2. Pretend Alice has an active upload in progress.
+    app_services._set_material_progress(
+        alice_workspace_id,
+        active=True,
+        operation="upload",
+        phase="indexing",
+        message="Загружаю alice_secret.pdf",
+        progress=42,
+        current_file="alice_secret.pdf",
+    )
+
+    # 3. Drop Alice's cookie, register Bob, query progress as Bob.
+    api_client.cookies.clear()
+    api_client.post(
+        "/api/auth/register",
+        json={
+            "email": "bob-leak-test@example.com",
+            "password": "bobpassword12",
+            "display_name": "Bob",
+        },
+    )
+
+    response = api_client.get("/api/materials/progress")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active"] is False
+    assert body["current_file"] == ""
+    assert body["message"] == ""
+    assert body["progress"] == 0
+    assert body["error"] == ""
+    # And Alice's own snapshot is still intact server-side.
+    alice_state = app_services._get_workspace_progress_snapshot(alice_workspace_id)
+    assert alice_state["current_file"] == "alice_secret.pdf"
+
+    app_services.reset_material_progress_for_tests()

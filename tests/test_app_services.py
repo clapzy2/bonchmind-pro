@@ -583,7 +583,8 @@ def test_generate_summary_service_calls_summary_handler(monkeypatch):
     assert response.diagnostics == "trace text"
     assert app_services.main._llm == "llm"
     assert app_services.main._kb == "kb"
-    assert calls[0][0] == "a.pdf"
+    assert calls[0][0] == WORKSPACE_ID
+    assert calls[0][1] == "a.pdf"
 
 
 def test_generate_summary_service_normalizes_all_materials_label(monkeypatch):
@@ -610,7 +611,48 @@ def test_generate_summary_service_normalizes_all_materials_label(monkeypatch):
         ),
     )
 
-    assert calls[0][0] == "Все файлы"
+    assert calls[0][0] == WORKSPACE_ID
+    assert calls[0][1] == "Все файлы"
+
+
+def test_generate_summary_service_forwards_workspace_id(monkeypatch):
+    """The caller's workspace_id must be passed through to ``on_generate_summary``.
+
+    Regression guard for Stage 4: previously the service-layer accepted the
+    argument but dropped it via ``del workspace_id``, which made the summary
+    silently read from ``config.DEFAULT_WORKSPACE_ID``. We assert here that
+    a custom workspace_id is propagated as the first positional argument.
+    """
+    calls = []
+
+    monkeypatch.setattr(app_services.runtime, "get_llm", lambda: "llm")
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: "kb")
+    monkeypatch.setattr(app_services.main, "_llm", None)
+    monkeypatch.setattr(app_services.main, "_kb", None)
+    monkeypatch.setattr(
+        app_services.main,
+        "on_generate_summary",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or "summary text",
+    )
+    monkeypatch.setattr(app_services, "format_last_trace", lambda: "trace text")
+
+    custom_workspace = "ws-stage-4-isolated"
+
+    app_services.generate_summary_service(
+        custom_workspace,
+        SummaryRequest(
+            selected_file="a.pdf",
+            selected_section="Глава 1",
+            topic="Bluetooth",
+            summary_type="Средний",
+        ),
+    )
+
+    assert calls, "on_generate_summary was not called"
+    args, _kwargs = calls[0]
+    assert args[0] == custom_workspace
+    assert args[0] != config.DEFAULT_WORKSPACE_ID
+    assert args[1:] == ("a.pdf", "Глава 1", "Bluetooth", "Средний")
 
 
 def test_export_summary_docx_service_uses_export_utils(monkeypatch):

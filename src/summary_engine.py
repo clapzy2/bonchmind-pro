@@ -234,6 +234,7 @@ def generate_selected_section_summary(
     section_filter,
     topic,
     summary_type,
+    workspace_id=config.DEFAULT_WORKSPACE_ID,
 ):
     """
     Быстрый конспект по выбранному разделу.
@@ -253,6 +254,7 @@ def generate_selected_section_summary(
             file_filter=file_filter,
             section_filter=section_filter,
             top_k=params["top_k"],
+            workspace_id=workspace_id,
         )
         chunks = _rank_topic_chunks_for_context(chunks)
         chunks = _filter_chunks_by_topic_anchors(chunks, topic)
@@ -263,6 +265,7 @@ def generate_selected_section_summary(
         chunks = kb.get_file_chunks(
             file_filter=file_filter,
             section_filter=section_filter,
+            workspace_id=workspace_id,
         )
         record_chunks("selected_section_full_chunks", chunks)
 
@@ -385,7 +388,15 @@ def generate_selected_section_summary(
 
     return header + result
 
-def generate_direct_topic_summary(kb, llm, topic, summary_type, file_filter="all", section_filter=None):
+def generate_direct_topic_summary(
+    kb,
+    llm,
+    topic,
+    summary_type,
+    file_filter="all",
+    section_filter=None,
+    workspace_id=config.DEFAULT_WORKSPACE_ID,
+):
     """
     Быстрый тематический конспект для узких тем.
 
@@ -400,6 +411,7 @@ def generate_direct_topic_summary(kb, llm, topic, summary_type, file_filter="all
         file_filter=file_filter,
         section_filter=section_filter,
         top_k=params["top_k"],
+        workspace_id=workspace_id,
     )
     chunks = _rank_topic_chunks_for_context(chunks)
     chunks = _focus_chunks_on_primary_section(chunks)
@@ -899,7 +911,13 @@ def _needs_semantic_backup_for_history_item(item):
     return any(marker in low for marker in markers)
 
 
-def _chunks_from_matching_sections(kb, item, file_filter="all", limit=6):
+def _chunks_from_matching_sections(
+    kb,
+    item,
+    file_filter="all",
+    limit=6,
+    workspace_id=config.DEFAULT_WORKSPACE_ID,
+):
     """Быстро добирает чанки из разделов, название которых явно совпадает с пунктом."""
     if not hasattr(kb, "get_available_sections") or not hasattr(kb, "get_file_chunks"):
         return []
@@ -909,7 +927,7 @@ def _chunks_from_matching_sections(kb, item, file_filter="all", limit=6):
         return []
 
     try:
-        sections = kb.get_available_sections()
+        sections = kb.get_available_sections(workspace_id=workspace_id)
     except Exception:
         return []
 
@@ -944,6 +962,7 @@ def _chunks_from_matching_sections(kb, item, file_filter="all", limit=6):
             section_chunks = kb.get_file_chunks(
                 file_filter=file_filter,
                 section_filter=section,
+                workspace_id=workspace_id,
             )
         except Exception:
             continue
@@ -1201,6 +1220,7 @@ def retrieve_chunks_by_plan(
     file_filter="all",
     section_filter=None,
     target_chunks=None,
+    workspace_id=config.DEFAULT_WORKSPACE_ID,
 ):
     """
     Ищет чанки по нескольким подпунктам плана.
@@ -1233,6 +1253,7 @@ def retrieve_chunks_by_plan(
             item=item,
             file_filter=file_filter,
             limit=per_query,
+            workspace_id=workspace_id,
         )
         if section_chunks:
             chunk_lists.append(section_chunks)
@@ -1244,6 +1265,7 @@ def retrieve_chunks_by_plan(
                     file_filter=file_filter,
                     section_filter=section_filter,
                     top_k=per_query,
+                    workspace_id=workspace_id,
                 ))
 
         chunks = _merge_chunk_lists(*chunk_lists)
@@ -1257,6 +1279,7 @@ def retrieve_chunks_by_plan(
             file_filter=file_filter,
             section_filter=section_filter,
             top_k=min(per_query, max_chunks),
+            workspace_id=workspace_id,
         )
         balanced_chunks = _merge_chunk_lists(balanced_chunks, topic_backup)
 
@@ -1283,6 +1306,7 @@ def retrieve_chunk_groups_by_plan(
     file_filter="all",
     section_filter=None,
     target_chunks=None,
+    workspace_id=config.DEFAULT_WORKSPACE_ID,
 ):
     """
     Ищет чанки отдельно для каждого пункта плана.
@@ -1328,6 +1352,7 @@ def retrieve_chunk_groups_by_plan(
             item=item,
             file_filter=file_filter,
             limit=per_query,
+            workspace_id=workspace_id,
         )
         if section_chunks:
             chunk_lists.append(section_chunks)
@@ -1344,6 +1369,7 @@ def retrieve_chunk_groups_by_plan(
                     file_filter=file_filter,
                     section_filter=section_filter,
                     top_k=per_query,
+                    workspace_id=workspace_id,
                 ))
 
         chunks = _merge_chunk_lists(*chunk_lists)
@@ -1364,6 +1390,7 @@ def retrieve_chunk_groups_by_plan(
             file_filter=file_filter,
             section_filter=section_filter,
             top_k=per_query,
+            workspace_id=workspace_id,
         )
         if topic_backup:
             groups.insert(0, {
@@ -1381,6 +1408,7 @@ def generate_planned_topic_summary(
     summary_type,
     file_filter="all",
     section_filter=None,
+    workspace_id=config.DEFAULT_WORKSPACE_ID,
 ):
     """
     Универсальный тематический конспект.
@@ -1413,6 +1441,7 @@ def generate_planned_topic_summary(
         file_filter=file_filter,
         section_filter=section_filter,
         target_chunks=params["top_k"],
+        workspace_id=workspace_id,
     )
     topic_chunks = [
         chunk
@@ -1676,7 +1705,15 @@ def generate_planned_topic_summary(
 
     return header + result
 
-def generate_topic_summary(kb, llm, topic, summary_type, file_filter="all", section_filter=None):
+def generate_topic_summary(
+    kb,
+    llm,
+    topic,
+    summary_type,
+    file_filter="all",
+    section_filter=None,
+    workspace_id=config.DEFAULT_WORKSPACE_ID,
+):
     """
     Тематический конспект через semantic search + rerank.
 
@@ -1689,6 +1726,7 @@ def generate_topic_summary(kb, llm, topic, summary_type, file_filter="all", sect
         file_filter=file_filter,
         section_filter=section_filter,
         top_k=params["top_k"],
+        workspace_id=workspace_id,
     )
     record_chunks("legacy_topic_chunks", topic_chunks)
 

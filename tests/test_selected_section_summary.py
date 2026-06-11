@@ -6,7 +6,7 @@ class FakeKnowledgeBase:
         self.used_search = False
         self.used_full_section = False
 
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=None):
         self.used_search = True
         return [
             {
@@ -18,7 +18,7 @@ class FakeKnowledgeBase:
             }
         ]
 
-    def get_file_chunks(self, file_filter="all", section_filter=None):
+    def get_file_chunks(self, file_filter="all", section_filter=None, workspace_id=None):
         self.used_full_section = True
         return [
             {
@@ -61,7 +61,7 @@ def test_selected_section_with_topic_uses_search_inside_section():
 
 
 class RankedFakeKnowledgeBase(FakeKnowledgeBase):
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=None):
         self.used_search = True
         return [
             {
@@ -115,7 +115,7 @@ def test_direct_topic_summary_sends_most_relevant_chunks_first():
 
 
 class NoisyDirectFakeKnowledgeBase(FakeKnowledgeBase):
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=None):
         self.used_search = True
         return [
             {
@@ -183,7 +183,7 @@ def test_direct_topic_summary_focuses_on_primary_section():
 
 
 class SelectedSectionNoisyFakeKnowledgeBase(FakeKnowledgeBase):
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=None):
         self.used_search = True
         return [
             {

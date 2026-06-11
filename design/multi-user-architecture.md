@@ -730,18 +730,18 @@ test on Stage 3 is signed off.
   file + chunks). For audit-log / undo we may want `status = "deleted"`
   with a tombstone row. Cheap to add later (one alembic + filter in
   `list_documents`); deferred until the product needs it.
-* **Workspace-aware `summary_engine.py`** — Stage 4. `generate_summary_service`
-  accepts `workspace_id` but currently bridges through `main.on_generate_summary`
-  / `summary_engine.py`, which read via `KnowledgeBase` method defaults
-  (`config.DEFAULT_WORKSPACE_ID`). Until Stage 4 lands, summary generation
-  effectively operates on the legacy/dev workspace.
+* ~~**Workspace-aware `summary_engine.py`** — Stage 4.~~ **Done in Stage 4.**
+  `generate_summary_service` now forwards `workspace_id` through
+  `main.on_generate_summary` into every `summary_engine` / KB call site, so
+  summary generation is scoped to the caller's workspace end-to-end. Gradio
+  keeps the legacy path via `gr.State(DEFAULT_WORKSPACE_ID)`.
 * **Per-workspace material job locks** — Stage 6 (per design plan). Today a
   single global `_material_job_lock` serialises background uploads across
   the whole instance; per-workspace progress *state* is already isolated.
-* **Drop `DEFAULT_WORKSPACE_ID`** — last call sites are `main.py` (Gradio)
-  and the `KnowledgeBase` method defaults. When Gradio is retired (Stage 5
-  frontend takeover) and `summary_engine.py` is plumbed (Stage 4), this
-  constant can disappear entirely from `config.py`.
+* **Drop `DEFAULT_WORKSPACE_ID`** — last call sites are `main.py` (Gradio,
+  via `gr.State`) and the `KnowledgeBase` / `summary_engine` method
+  defaults. When Gradio is retired (Stage 5 frontend takeover) the constant
+  can disappear entirely from `config.py`.
 * **Orphan chunk scrubber** — `document_service.delete_document` swallows
   ChromaDB errors during `remove_chunks` so a transient failure does not
   block the SQL delete. A maintenance task (Stage 6) should periodically

@@ -105,6 +105,7 @@ class KnowledgeBase:
         file_path,
         workspace_id=config.DEFAULT_WORKSPACE_ID,
         document_id=None,
+        original_name=None,
         progress_callback=None,
     ):
         """Загрузить файл, разбить на чанки, добавить в ChromaDB.
@@ -113,6 +114,19 @@ class KnowledgeBase:
         вызывается из legacy/Gradio-пути без записи ``Document``, передаётся
         ``None`` и ``document_id`` подставляется как ``original_filename``,
         чтобы сохранить старое поведение дедупликации по имени файла.
+
+        ``original_name`` — пользовательское имя материала (например
+        ``alice_doc.txt``). На диске файл может лежать под именем с
+        document_id-префиксом (``<uuid>__alice_doc.txt``), но в Chroma
+        metadata ``source_file`` сохраняется как ``original_name``, чтобы:
+
+        * ``list_materials`` / ``list_sections`` находили чанки по тому же
+          ключу, что отдаётся фронту (``Document.original_name``);
+        * метки источников в чате (``source_file -> section``) показывали
+          пользователю понятное имя, а не UUID-префикс.
+
+        Если ``original_name`` не передан, fallback — ``os.path.basename(file_path)``
+        (Gradio / прямые тесты KB без service-слоя).
         """
         def report(**payload):
             if progress_callback:
@@ -122,6 +136,7 @@ class KnowledgeBase:
         # Legacy bridge: anonymous Gradio uploads identify the document by
         # filename, while Stage 3c authenticated uploads pass an explicit UUID.
         effective_document_id = document_id or filename
+        effective_source_name = original_name or filename
 
         lower = file_path.lower()
         supported = any(lower.endswith(fmt) for fmt in config.SUPPORTED_FORMATS)
@@ -173,7 +188,7 @@ class KnowledgeBase:
                     new_metas.append({
                         "workspace_id": workspace_id,
                         "document_id": effective_document_id,
-                        "source_file": filename,
+                        "source_file": effective_source_name,
                         "source": file_path,
                         "section": section_name or "",
                         "chunk_id": len(new_chunks) - 1,

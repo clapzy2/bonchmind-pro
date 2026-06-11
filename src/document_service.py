@@ -170,6 +170,7 @@ def create_document(
             stored_path,
             workspace_id=workspace_id,
             document_id=document_id,
+            original_name=name,
         )
     except Exception as error:
         doc.status = STATUS_ERROR
@@ -254,6 +255,7 @@ def reindex_document(
             doc.stored_path,
             workspace_id=workspace_id,
             document_id=document_id,
+            original_name=doc.original_name,
         )
     except Exception as error:
         doc.status = STATUS_ERROR

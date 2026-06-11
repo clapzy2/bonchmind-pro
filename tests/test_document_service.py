@@ -88,6 +88,28 @@ def test_create_document_invokes_kb_with_document_id(db_session, fake_kb):
     assert len(add_calls) == 1
     assert add_calls[0]["workspace_id"] == WORKSPACE_A
     assert add_calls[0]["document_id"] == doc.id
+    # Stage 3d fix: original_name is propagated to the KB so chunk metadata
+    # stores ``source_file = original_name`` (not the on-disk filename with
+    # document_id prefix).
+    assert add_calls[0]["original_name"] == "book.pdf"
+
+
+def test_reindex_document_invokes_kb_with_original_name(db_session, fake_kb):
+    doc = document_service.create_document(
+        db_session,
+        workspace_id=WORKSPACE_A,
+        owner_user_id=USER_A,
+        original_name="book.pdf",
+        content=b"hello",
+    )
+    fake_kb.calls.clear()
+
+    document_service.reindex_document(db_session, WORKSPACE_A, doc.id)
+
+    add_calls = [payload for name, payload in fake_kb.calls if name == "add_book"]
+    assert add_calls
+    assert add_calls[0]["original_name"] == "book.pdf"
+    assert add_calls[0]["document_id"] == doc.id
 
 
 def test_create_document_replaces_existing_with_same_original_name(db_session, fake_kb):
@@ -123,7 +145,7 @@ def test_create_document_replaces_existing_with_same_original_name(db_session, f
 
 def test_create_document_marks_error_when_indexer_returns_error_string(db_session, monkeypatch):
     class ErrorKB(FakeKB):
-        def add_book(self, file_path, workspace_id=None, document_id=None, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
             self._log("add_book", file_path=file_path, workspace_id=workspace_id, document_id=document_id)
             return "Файл пуст: book.pdf"
 
@@ -147,7 +169,7 @@ def test_create_document_error_message_is_truncated_to_1024_chars(db_session, mo
     long_message = "x" * 5000
 
     class ChattyKB(FakeKB):
-        def add_book(self, file_path, workspace_id=None, document_id=None, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
             return long_message
 
     monkeypatch.setattr(runtime, "get_kb", lambda: ChattyKB())
@@ -166,7 +188,7 @@ def test_create_document_error_message_is_truncated_to_1024_chars(db_session, mo
 
 def test_create_document_marks_error_when_indexer_raises(db_session, monkeypatch):
     class CrashKB(FakeKB):
-        def add_book(self, file_path, workspace_id=None, document_id=None, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
             raise RuntimeError("kaboom")
 
     monkeypatch.setattr(runtime, "get_kb", lambda: CrashKB())

@@ -645,6 +645,53 @@ def test_delete_does_not_touch_another_users_document(api_client, monkeypatch, t
     assert not os.path.exists(bob_doc.stored_path)
 
 
+def test_small_upload_remains_visible_in_materials_endpoint(
+    api_client, monkeypatch, tmp_path
+):
+    """Smoke-bug regression: a tiny upload that produces zero/one chunk and
+    no sections must still appear in ``/api/materials``. Replays the exact
+    sequence the user hit on the manual smoke test (register → upload
+    alice_doc.txt → GET /api/materials) with a KB whose profile lookup
+    returns zero counts (the same shape as the real KB returned for the
+    smoke-bug)."""
+    from src import app_services
+    from tests.test_app_services import FakeKB
+
+    monkeypatch.setattr(app_services.config, "DOCS_DIR", str(tmp_path / "docs"))
+
+    class BlindKB(FakeKB):
+        def get_file_profile(self, file_name, workspace_id=None):
+            return {"chunk_count": 0, "sections_count": 0, "sections": []}
+
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: BlindKB())
+
+    api_client.post(
+        "/api/auth/register",
+        json={
+            "email": "smoke-bug@example.com",
+            "password": "smokepassword12",
+            "display_name": "Smoke",
+        },
+    )
+    upload_response = api_client.post(
+        "/api/materials/upload",
+        files={"file": ("alice_doc.txt", b"Tiny smoke body", "text/plain")},
+    )
+    assert upload_response.status_code == 200
+    if app_services._material_job_thread is not None:
+        app_services._material_job_thread.join(timeout=10)
+
+    response = api_client.get("/api/materials")
+    assert response.status_code == 200
+    materials = response.json()["materials"]
+    assert len(materials) == 1, materials
+    entry = materials[0]
+    assert entry["name"] == "alice_doc.txt"
+    assert entry["status"] == "ready"
+    assert isinstance(entry["id"], str) and len(entry["id"]) == 36
+    assert entry["quality_label"] != "hidden"
+
+
 def test_materials_response_includes_document_id(api_client, monkeypatch, tmp_path):
     """The /api/materials list must surface ``id`` so the frontend can move
     from name-based addressing to document_id-based addressing."""

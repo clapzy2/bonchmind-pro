@@ -81,6 +81,54 @@ def test_chunk_id_differs_across_documents_for_same_text_in_one_workspace():
     assert id_old != id_new
 
 
+def test_add_book_stores_original_name_as_source_file(tmp_path):
+    """Stage 3d fix: source_file metadata is the user-facing original_name.
+
+    Authenticated uploads land on disk at
+    ``docs/<workspace>/<document_id>__<original_name>``, but Chroma chunks
+    must record ``source_file = original_name`` so:
+
+    * ``list_materials`` can look up profile by ``Document.original_name``
+      (which surfaced the smoke-test bug — KB returned 0 chunks because it
+      was looking for ``alice_doc.txt`` while metadata held
+      ``<uuid>__alice_doc.txt``);
+    * chat source labels show ``alice_doc.txt -> Раздел`` instead of
+      ``13606847-...__alice_doc.txt -> Раздел``.
+    """
+    kb = make_kb(tmp_path)
+    text = "Содержимое для проверки имени source_file. " * 5
+
+    document_id = "doc-uuid-1234"
+    on_disk = write_doc(tmp_path, f"{document_id}__alice_doc.txt", text)
+
+    kb.add_book(
+        on_disk,
+        workspace_id="workspace-a",
+        document_id=document_id,
+        original_name="alice_doc.txt",
+    )
+
+    # The KB profile look-up by original_name now returns non-zero counts.
+    profile = kb.get_file_profile("alice_doc.txt", workspace_id="workspace-a")
+    assert profile["chunk_count"] > 0
+
+    # Files listing surfaces the user-facing name (no UUID prefix).
+    files = kb.get_available_files(workspace_id="workspace-a")
+    assert files == ["alice_doc.txt"]
+
+
+def test_add_book_falls_back_to_filename_when_original_name_missing(tmp_path):
+    """Legacy/Gradio path: no ``original_name`` -> source_file is the
+    on-disk basename (unchanged Stage 2 behaviour)."""
+    kb = make_kb(tmp_path)
+    on_disk = write_doc(tmp_path, "legacy_book.txt", "Минимальный материал. " * 5)
+
+    kb.add_book(on_disk, workspace_id="workspace-legacy")
+
+    files = kb.get_available_files(workspace_id="workspace-legacy")
+    assert files == ["legacy_book.txt"]
+
+
 def test_add_book_same_text_indexed_independently_per_workspace(tmp_path):
     kb = make_kb(tmp_path)
     text = "Содержимое учебника одинаково для обоих пространств. " * 5

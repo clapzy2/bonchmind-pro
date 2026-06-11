@@ -74,12 +74,13 @@ class FakeKB:
         self.indexed.discard((workspace_id, document_id))
         return f"🗑️ document_id={document_id}: удалено 1 фрагментов"
 
-    def add_book(self, file_path, workspace_id=None, document_id=None, progress_callback=None):
+    def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
         self._log(
             "add_book",
             file_path=file_path,
             workspace_id=workspace_id,
             document_id=document_id,
+            original_name=original_name,
         )
         self.indexed.add((workspace_id, document_id))
         return f"✅ {file_path}: добавлено 3 фрагментов"
@@ -171,6 +172,61 @@ def test_list_materials_hides_other_workspaces(db_session, monkeypatch):
     names = {m.name for m in response.materials}
     assert "a.pdf" in names
     assert "b.pdf" not in names
+
+
+def test_list_materials_never_hides_ready_document_with_zero_chunks(
+    db_session, monkeypatch
+):
+    """Smoke-bug regression (Stage 3d fix).
+
+    Before the fix, a tiny ``alice_doc.txt`` (1 chunk, 0 sections, status=ready)
+    disappeared from ``/api/materials`` because ``kb.get_file_profile`` lookup
+    missed and the old ``_material_quality`` returned ``"hidden"`` for any
+    ``chunk_count <= 0``. ``Document.status`` is now the source of truth for
+    visibility — a ready Document must appear regardless of KB profile.
+    """
+
+    class BlindKB(FakeKB):
+        """Simulates the smoke-bug scenario: KB profile returns zeros."""
+
+        def get_file_profile(self, file_name, workspace_id=None):
+            self._log("get_file_profile", file_name=file_name, workspace_id=workspace_id)
+            return {"chunk_count": 0, "sections_count": 0, "sections": []}
+
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: BlindKB())
+
+    doc = _insert_document(db_session, name="alice_doc.txt", status="ready")
+
+    response = app_services.list_materials(WORKSPACE_ID)
+    by_name = {m.name: m for m in response.materials}
+
+    assert "alice_doc.txt" in by_name, (
+        "ready Document must surface even when KB returns chunk_count=0"
+    )
+    entry = by_name["alice_doc.txt"]
+    assert entry.id == doc.id
+    assert entry.status == "ready"
+    assert entry.quality_label != "hidden"
+    # The fallback for zero-chunk ready documents is the new "weak" badge.
+    assert entry.quality_label == "weak"
+
+
+def test_list_materials_survives_kb_profile_lookup_exception(
+    db_session, monkeypatch
+):
+    """Defence-in-depth: a KB error must NOT take the document off the list."""
+
+    class CrashingKB(FakeKB):
+        def get_file_profile(self, file_name, workspace_id=None):
+            raise RuntimeError("KB temporarily unavailable")
+
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: CrashingKB())
+
+    _insert_document(db_session, name="alice_doc.txt", status="ready")
+
+    response = app_services.list_materials(WORKSPACE_ID)
+    names = {m.name for m in response.materials}
+    assert "alice_doc.txt" in names
 
 
 def test_list_materials_surfaces_processing_and_error_statuses(db_session, monkeypatch):
@@ -335,7 +391,7 @@ def test_upload_marks_status_error_when_indexing_fails(
     monkeypatch.setattr(app_services.config, "DOCS_DIR", str(tmp_path / "docs"))
 
     class ErrorKB(FakeKB):
-        def add_book(self, file_path, workspace_id=None, document_id=None, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
             self._log("add_book", file_path=file_path, workspace_id=workspace_id, document_id=document_id)
             return "Формат не поддерживается: book.pdf"
 

@@ -172,23 +172,34 @@ def get_system_status(workspace_id: str):
     )
 
 
-def _material_quality(sections_count, chunk_count):
-    if chunk_count <= 0:
-        return "hidden", "Внутри файла пока нет пригодного содержимого для поиска и генерации."
+def _ready_material_quality(sections_count, chunk_count):
+    """Quality badge for a Document whose status is already ``ready``.
+
+    Stage 3d invariant: a ready Document is **never** hidden from the
+    materials list — ``Document.status`` is the source of truth for
+    visibility. The badge below is purely informational: it tells the user
+    whether the material has good structure, is plain text, or is
+    degraded (indexed but produced no chunks).
+    """
     if sections_count >= 3:
         return "ready", "Материал хорошо подходит для поиска, конспектов и ссылок на источники."
     if sections_count > 0:
         return "ready", "Структура короткая, но материал уже пригоден для поиска и опоры на разделы."
-    return "plain_text", "Сплошной текст без явных разделов: хорош для чтения и диалога, слабее для навигации."
+    if chunk_count > 0:
+        return "plain_text", "Сплошной текст без явных разделов: подходит для чтения и диалога, слабее для навигации."
+    # Document is marked ready but the indexer produced no chunks. Still
+    # surfaced so the user can re-run /reindex from the UI; never hidden.
+    return "weak", "Материал проиндексирован, но содержательных фрагментов выделить не удалось. Попробуйте переиндексировать."
 
 
 def list_materials(workspace_id: str):
     """Stage 3c: enumerate materials from the ``Document`` table.
 
-    Chroma stats stay as the per-chunk truth (chunk_count, sections_count for
-    quality badges), but the *list* of materials comes from SQL — so an
-    error-status upload is visible to the user even though it has no chunks
-    yet, and replace-on-conflict keeps the listing free of duplicates.
+    Visibility is owned entirely by ``Document.status``. The KB profile is
+    used only to set the informational quality label/sections_count — it
+    never decides whether a row is shown. This protects against KB lookup
+    misses (e.g. a stale ``source_file`` mismatch) silently hiding an
+    indexed document from the user.
     """
     kb = runtime.get_kb()
     db = SessionLocal()
@@ -226,12 +237,15 @@ def list_materials(workspace_id: str):
             )
             continue
 
-        profile = kb.get_file_profile(doc.original_name, workspace_id=workspace_id)
-        sections_count = int(profile.get("sections_count", 0) or 0)
-        chunk_count = int(profile.get("chunk_count", 0) or 0)
-        quality_label, quality_reason = _material_quality(sections_count, chunk_count)
-        if quality_label == "hidden":
-            continue
+        # Status is READY: surface the document, then ask the KB for a
+        # quality badge. KB lookup failures degrade the badge, not the row.
+        try:
+            profile = kb.get_file_profile(doc.original_name, workspace_id=workspace_id)
+        except Exception:
+            profile = {}
+        sections_count = int((profile or {}).get("sections_count", 0) or 0)
+        chunk_count = int((profile or {}).get("chunk_count", 0) or 0)
+        quality_label, quality_reason = _ready_material_quality(sections_count, chunk_count)
 
         materials.append(
             MaterialInfo(

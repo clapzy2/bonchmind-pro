@@ -79,8 +79,14 @@ class WorkspaceAwareFakeKB:
         )
 
     # --- write paths ---
-    def add_book(self, file_path, workspace_id=None, document_id=None, progress_callback=None):
-        self._log("add_book", file_path=file_path, workspace_id=workspace_id, document_id=document_id)
+    def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
+        self._log(
+            "add_book",
+            file_path=file_path,
+            workspace_id=workspace_id,
+            document_id=document_id,
+            original_name=original_name,
+        )
         return f"✅ {file_path}: добавлено 3 фрагментов"
 
     def remove_chunks(self, workspace_id, document_id):

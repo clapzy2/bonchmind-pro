@@ -16,10 +16,9 @@ Two pieces stay shared on purpose:
   (``_material_progress_states`` keyed by ``workspace_id``) so a caller can
   never see another workspace's filename, progress percent or error.
 
-Summary generation still bridges through ``main._kb`` / ``main.on_generate_summary``
-without an explicit ``workspace_id`` — ``summary_engine.py`` still uses
-``config.DEFAULT_WORKSPACE_ID`` for its KB calls. Threading ``workspace_id``
-through the summary path is intentionally deferred to Stage 4.
+Summary generation bridges through ``main._kb`` / ``main.on_generate_summary``
+and now forwards ``workspace_id`` end-to-end into ``summary_engine.py``'s
+KB calls (Stage 4).
 """
 
 import os
@@ -646,15 +645,11 @@ def start_reindex_material_service(workspace_id: str, file_name=None):
 
 
 def generate_summary_service(workspace_id: str, request: SummaryRequest):
-    """Generate a summary using the legacy Gradio handler.
+    """Generate a summary scoped to ``workspace_id``.
 
-    Stage 3b limitation: ``summary_engine.py`` still resolves the workspace
-    through the KB method defaults (``config.DEFAULT_WORKSPACE_ID``), so this
-    request will read from the dev/legacy workspace, not ``workspace_id``.
-    Stage 4 plumbs ``workspace_id`` through the summary path end-to-end.
-
-    The argument is accepted now so the API signature stays consistent and
-    the Stage 4 change becomes a service-layer-only fix.
+    ``workspace_id`` is forwarded into ``main.on_generate_summary`` and from
+    there into every ``summary_engine`` / KB call, so the resulting summary
+    only sees chunks from the authorised workspace.
     """
     main._llm = runtime.get_llm()
     main._kb = runtime.get_kb()

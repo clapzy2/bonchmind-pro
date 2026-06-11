@@ -1,5 +1,11 @@
-import { Activity } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Activity, LogOut } from "lucide-react";
+
 import type { ApiHealth } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 import type { WorkspaceSection } from "@/components/workspace-sections";
 
 type TopbarProps = {
@@ -31,9 +37,28 @@ const sectionTitles: Record<WorkspaceSection, { label: string; subtitle: string 
 };
 
 export function Topbar({ activeSection, health }: TopbarProps) {
+  const router = useRouter();
+  const { user, logout } = useAuth();
+  const [loggingOut, setLoggingOut] = useState(false);
+
   const online = health.status === "ok";
   const copy = sectionTitles[activeSection];
   const stationLabel = online ? "Станция готова к работе" : "Backend недоступен";
+
+  async function onLogout() {
+    setLoggingOut(true);
+    try {
+      await logout();
+    } catch {
+      // Even if the backend call fails (e.g. already expired), clear local
+      // state by going to /login — the AuthProvider will re-probe and find
+      // null.
+    }
+    router.replace("/login");
+  }
+
+  const displayName = user?.display_name?.trim() || user?.email || "";
+  const workspaceName = user?.personal_workspace?.name || "";
 
   return (
     <header className="topbar">
@@ -50,6 +75,26 @@ export function Topbar({ activeSection, health }: TopbarProps) {
           <Activity size={15} />
           {online ? "Готово" : "Offline"}
         </span>
+
+        {user ? (
+          <div className="topbar-user" title={user.email}>
+            <div className="topbar-user-name">{displayName}</div>
+            {workspaceName ? <div className="topbar-user-workspace muted">{workspaceName}</div> : null}
+          </div>
+        ) : null}
+
+        {user ? (
+          <button
+            type="button"
+            className="bm-button-secondary topbar-logout"
+            onClick={onLogout}
+            disabled={loggingOut}
+            aria-label="Выйти"
+          >
+            <LogOut size={15} />
+            {loggingOut ? "..." : "Выйти"}
+          </button>
+        ) : null}
       </div>
     </header>
   );

@@ -24,7 +24,7 @@ class FakeKnowledgeBase:
     def __init__(self):
         self.top_k_values = []
 
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=None):
         self.top_k_values.append(top_k)
         query_index = len(self.top_k_values)
 
@@ -44,7 +44,7 @@ class MappingKnowledgeBase:
     def __init__(self, mapping):
         self.mapping = mapping
 
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=None):
         result = list(self.mapping.get(query, []))
         return result[:top_k]
 
@@ -57,10 +57,10 @@ class SectionKnowledgeBase:
             "ГЛАВА 16. ВЕЛИКАЯ ОТЕЧЕСТВЕННАЯ ВОЙ НА",
         ]
 
-    def get_available_sections(self):
+    def get_available_sections(self, workspace_id=None):
         return self.sections
 
-    def get_file_chunks(self, file_filter="all", section_filter=None):
+    def get_file_chunks(self, file_filter="all", section_filter=None, workspace_id=None):
         return [
             {
                 "text": f"{section_filter} text about topic.",
@@ -71,7 +71,7 @@ class SectionKnowledgeBase:
             }
         ]
 
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=None):
         self.search_calls += 1
         return []
 
@@ -102,7 +102,7 @@ class NepSectionKnowledgeBase(SectionKnowledgeBase):
             "ГЛАВА 14. § 72. ГОРОД И ДЕРЕВНЯ В 1920-Х ГОДАХ. ПОЛИТИЧЕСКАЯ БОРЬБА В ПЕРИОД НЭПА",
         ]
 
-    def get_file_chunks(self, file_filter="all", section_filter=None):
+    def get_file_chunks(self, file_filter="all", section_filter=None, workspace_id=None):
         return [
             {
                 "text": "Политика коренизации нацеливалась на выдвижение местных кадров.",
@@ -129,7 +129,7 @@ class NepSectionKnowledgeBase(SectionKnowledgeBase):
 
 
 class NepTocSectionKnowledgeBase(NepSectionKnowledgeBase):
-    def get_file_chunks(self, file_filter="all", section_filter=None):
+    def get_file_chunks(self, file_filter="all", section_filter=None, workspace_id=None):
         return [
             {
                 "text": (
@@ -687,15 +687,15 @@ def test_grouped_retrieval_respects_short_target_chunk_limit():
 
 
 class MediumPromptKnowledgeBase:
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=None):
         return []
 
-    def get_available_sections(self):
+    def get_available_sections(self, workspace_id=None):
         return [
             "ГЛАВА 13. § 64. ПРИЧИНЫ РЕВОЛЮЦИОННОГО КРИЗИСА 1917 г.",
         ]
 
-    def get_file_chunks(self, file_filter="all", section_filter=None):
+    def get_file_chunks(self, file_filter="all", section_filter=None, workspace_id=None):
         return [
             {
                 "text": "Февральская революция привела к смене власти.",

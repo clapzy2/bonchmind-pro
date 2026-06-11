@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { getMaterials, getSystemStatus, type ApiHealth, type MaterialInfo, type SummaryResponse, type SystemStatus } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
@@ -17,6 +17,19 @@ type AppShellProps = {
   materials: MaterialInfo[];
   status: SystemStatus;
 };
+
+const ACTIVE_SECTION_KEY = "bonchmind-active-section";
+const VALID_SECTIONS: readonly WorkspaceSection[] = [
+  "summary",
+  "assistant",
+  "materials",
+  "quality",
+  "settings",
+];
+
+function isWorkspaceSection(value: unknown): value is WorkspaceSection {
+  return typeof value === "string" && (VALID_SECTIONS as readonly string[]).includes(value);
+}
 
 function normalizeMaterial(material: MaterialInfo): MaterialInfo {
   const sectionsCount = Number(material.sections_count ?? 0);
@@ -40,7 +53,13 @@ function getVisibleMaterials(materials: MaterialInfo[]): MaterialInfo[] {
 
 export function AppShell({ health, materials, status }: AppShellProps) {
   const [lastRun, setLastRun] = useState<SummaryResponse | null>(null);
-  const [activeSection, setActiveSection] = useState<WorkspaceSection>("summary");
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>(() => {
+    // SSR-safe initial read of the persisted tab; client-only because the
+    // shell is "use client".
+    if (typeof window === "undefined") return "summary";
+    const stored = window.localStorage.getItem(ACTIVE_SECTION_KEY);
+    return isWorkspaceSection(stored) ? stored : "summary";
+  });
   const [materialsState, setMaterialsState] = useState<MaterialInfo[]>(() => getVisibleMaterials(materials));
   const [statusState, setStatusState] = useState<SystemStatus>(status);
   const [prevMaterials, setPrevMaterials] = useState(materials);
@@ -56,11 +75,18 @@ export function AppShell({ health, materials, status }: AppShellProps) {
     setStatusState(status);
   }
 
-  async function refreshLibraryState() {
+  // Persist the active tab so F5 (or any client-side re-mount) keeps the
+  // user on the screen they were last using instead of bouncing back to
+  // "Конспект".
+  useEffect(() => {
+    window.localStorage.setItem(ACTIVE_SECTION_KEY, activeSection);
+  }, [activeSection]);
+
+  const refreshLibraryState = useCallback(async () => {
     const [materialsResponse, nextStatus] = await Promise.all([getMaterials(), getSystemStatus()]);
     setMaterialsState(getVisibleMaterials(materialsResponse.materials));
     setStatusState(nextStatus);
-  }
+  }, []);
 
   return (
     <div className="app-shell">

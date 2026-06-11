@@ -302,6 +302,11 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
           text: response.message,
         });
         setProgressState(await getMaterialProgress());
+        // Intentionally do NOT clear isUploading here — uploadMaterial returns
+        // as soon as the backend kicks off the background indexing job; the
+        // polling effect needs isUploading=true to keep calling
+        // /api/materials/progress until the job flips active=false. The
+        // finalize effect then resets isUploading and refreshes the library.
       }
     } catch (err) {
       if (handleAuthError(err, router)) return;
@@ -318,8 +323,11 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
         current_file: file.name,
         error: "upload_failed",
       });
-    } finally {
       setIsUploading(false);
+      setHasPendingSync(false);
+    } finally {
+      // Reset the file input only — keep isUploading until the background
+      // indexing job actually finishes (see comment above).
       event.target.value = "";
     }
   }

@@ -6,10 +6,18 @@ from pydantic import BaseModel, Field
 
 
 class MaterialInfo(BaseModel):
+    # Stage 3c: ``id`` is the ``Document.id`` (UUID) and is the canonical
+    # handle for delete/reindex/sections going forward. ``name`` stays as the
+    # human-visible ``Document.original_name`` and remains the URL parameter
+    # for the legacy ``/api/materials/{file_name}/*`` routes until the
+    # frontend migrates. Empty default keeps the type backwards-compatible
+    # for Gradio/test paths that have no Document row.
+    id: str = ""
     name: str
     sections_count: int = 0
     quality_label: str = "ready"
     quality_reason: str = ""
+    status: str = "ready"
 
 
 class MaterialActionResponse(BaseModel):

@@ -713,3 +713,36 @@ no-op.
 параллельно/в любом порядке после готовности Этапа 3. Шаринг workspace и роли
 (п.13, "Этап 6" из предыдущей версии плана) — отдельный трек после публичного
 MVP, не входит в этот план.
+
+---
+
+## Stage 3 backlog (carryovers, not blockers for merging Stage 3)
+
+Tracked here so it is impossible to lose between stages. Each item is small
+and independent — they can be merged in any order once the manual smoke
+test on Stage 3 is signed off.
+
+* **`UniqueConstraint(workspace_id, original_name)` on `documents`** — replace
+  flow is enforced by `document_service.create_document` today; add a DB-
+  level guarantee (alembic migration + `__table_args__`) so a concurrent
+  double-upload can't sneak past the application check.
+* **Soft-delete for `Document`** — current behaviour is hard delete (row +
+  file + chunks). For audit-log / undo we may want `status = "deleted"`
+  with a tombstone row. Cheap to add later (one alembic + filter in
+  `list_documents`); deferred until the product needs it.
+* **Workspace-aware `summary_engine.py`** — Stage 4. `generate_summary_service`
+  accepts `workspace_id` but currently bridges through `main.on_generate_summary`
+  / `summary_engine.py`, which read via `KnowledgeBase` method defaults
+  (`config.DEFAULT_WORKSPACE_ID`). Until Stage 4 lands, summary generation
+  effectively operates on the legacy/dev workspace.
+* **Per-workspace material job locks** — Stage 6 (per design plan). Today a
+  single global `_material_job_lock` serialises background uploads across
+  the whole instance; per-workspace progress *state* is already isolated.
+* **Drop `DEFAULT_WORKSPACE_ID`** — last call sites are `main.py` (Gradio)
+  and the `KnowledgeBase` method defaults. When Gradio is retired (Stage 5
+  frontend takeover) and `summary_engine.py` is plumbed (Stage 4), this
+  constant can disappear entirely from `config.py`.
+* **Orphan chunk scrubber** — `document_service.delete_document` swallows
+  ChromaDB errors during `remove_chunks` so a transient failure does not
+  block the SQL delete. A maintenance task (Stage 6) should periodically
+  scan for chunks whose `document_id` no longer exists and drop them.

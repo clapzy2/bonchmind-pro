@@ -107,13 +107,22 @@ AUTH_COOKIE_NAME = "bonchmind_auth"
 # Set to True only when serving the frontend over HTTPS in production.
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
 
-# --- Multi-user foundation (Stage 2: workspace-scoped storage/index) -------
+# --- Multi-user foundation: legacy/dev workspace bridge --------------------
 #
-# Temporary bridge workspace id used by app_services.py/main.py until auth is
-# wired into the existing endpoints (Stage 3). All KnowledgeBase methods take
-# workspace_id as a keyword argument defaulting to this value, so existing
-# call sites keep working unchanged while ChromaDB metadata/where-filters and
-# on-disk paths (docs/<workspace_id>/...) are already workspace-scoped.
+# As of Stage 3b the authenticated FastAPI flow resolves ``workspace_id``
+# from ``current_user.personal_workspace.id`` and never reads this constant.
+# It is retained only as the bridge value for:
+#
+#   * ``main.py`` (the legacy Gradio UI), which has no auth and runs against
+#     a single shared workspace.
+#   * ``summary_engine.py`` — still uses the ``KnowledgeBase`` default kwarg
+#     until Stage 4 plumbs ``workspace_id`` through the summary path.
+#   * ``KnowledgeBase`` method defaults — keeps direct KB calls from tests
+#     and the summary path working without an explicit workspace.
+#
+# Do NOT introduce new references to this constant from authenticated API
+# code: anything driven by a user request must take ``workspace_id`` as a
+# parameter sourced from the session cookie.
 DEFAULT_WORKSPACE_ID = "dev-default"
 
 

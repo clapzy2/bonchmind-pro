@@ -14,10 +14,18 @@ export type SystemStatus = {
 };
 
 export type MaterialInfo = {
+  /**
+   * Document.id (UUID, 36 chars) — Stage 3c. Optional/empty for legacy
+   * responses without a backing Document row; the frontend should prefer
+   * ``id`` over ``name`` when both are present.
+   */
+  id?: string;
   name: string;
   sections_count: number;
   quality_label: string;
   quality_reason: string;
+  /** processing | ready | error — Stage 3c Document.status. */
+  status?: string;
 };
 
 export type MaterialActionResponse = {
@@ -156,10 +164,23 @@ function apiUrl(path: string): string {
   return `${backendUrl}${path}`;
 }
 
+/**
+ * Raised by action-style calls (upload, delete, chat, …) when the backend
+ * returns 401. Lets UI components show "пожалуйста, войдите" instead of a
+ * generic crash. Stage 5 will wire a real redirect to /login.
+ */
+export class UnauthorizedError extends Error {
+  constructor(message = "Войдите в систему, чтобы продолжить.") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
 async function fetchJson<T>(path: string, fallback: T): Promise<T> {
   try {
     const response = await fetch(apiUrl(path), {
       cache: "no-store",
+      credentials: "include",
       headers: {
         Accept: "application/json",
       },
@@ -172,6 +193,15 @@ async function fetchJson<T>(path: string, fallback: T): Promise<T> {
     return (await response.json()) as T;
   } catch {
     return fallback;
+  }
+}
+
+function ensureResponseOk(response: Response, action: string): void {
+  if (response.status === 401) {
+    throw new UnauthorizedError();
+  }
+  if (!response.ok) {
+    throw new Error(`${action} failed: ${response.status}`);
   }
 }
 
@@ -211,58 +241,50 @@ export async function uploadMaterial(file: File): Promise<MaterialActionResponse
 
   const response = await fetch("/api/materials/upload", {
     method: "POST",
+    credentials: "include",
     body: formData,
   });
 
-  if (!response.ok) {
-    throw new Error(`Upload failed: ${response.status}`);
-  }
-
+  ensureResponseOk(response, "Upload");
   return (await response.json()) as MaterialActionResponse;
 }
 
 export async function deleteMaterial(fileName: string): Promise<MaterialActionResponse> {
   const response = await fetch(`/api/materials/${encodeURIComponent(fileName)}`, {
     method: "DELETE",
+    credentials: "include",
     headers: {
       Accept: "application/json",
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`Delete failed: ${response.status}`);
-  }
-
+  ensureResponseOk(response, "Delete");
   return (await response.json()) as MaterialActionResponse;
 }
 
 export async function reindexMaterial(fileName: string): Promise<MaterialActionResponse> {
   const response = await fetch(`/api/materials/${encodeURIComponent(fileName)}/reindex`, {
     method: "POST",
+    credentials: "include",
     headers: {
       Accept: "application/json",
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`Reindex failed: ${response.status}`);
-  }
-
+  ensureResponseOk(response, "Reindex");
   return (await response.json()) as MaterialActionResponse;
 }
 
 export async function reindexLibrary(): Promise<MaterialActionResponse> {
   const response = await fetch("/api/materials/reindex", {
     method: "POST",
+    credentials: "include",
     headers: {
       Accept: "application/json",
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`Reindex failed: ${response.status}`);
-  }
-
+  ensureResponseOk(response, "Reindex");
   return (await response.json()) as MaterialActionResponse;
 }
 
@@ -270,12 +292,20 @@ export async function generateSummary(request: SummaryRequest): Promise<SummaryR
   try {
     const response = await fetch("/api/summaries", {
       method: "POST",
+      credentials: "include",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
       body: JSON.stringify(request),
     });
+
+    if (response.status === 401) {
+      return {
+        text: "Войдите в систему, чтобы сгенерировать конспект.",
+        diagnostics: "",
+      };
+    }
 
     if (!response.ok) {
       return {
@@ -296,6 +326,7 @@ export async function generateSummary(request: SummaryRequest): Promise<SummaryR
 export async function exportSummaryDocx(request: SummaryExportRequest): Promise<Blob> {
   const response = await fetch("/api/exports/summary", {
     method: "POST",
+    credentials: "include",
     headers: {
       Accept: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "Content-Type": "application/json",
@@ -303,16 +334,14 @@ export async function exportSummaryDocx(request: SummaryExportRequest): Promise<
     body: JSON.stringify(request),
   });
 
-  if (!response.ok) {
-    throw new Error(`Export failed: ${response.status}`);
-  }
-
+  ensureResponseOk(response, "Export");
   return await response.blob();
 }
 
 export async function sendChatMessage(request: ChatRequest): Promise<ChatResponse> {
   const response = await fetch("/api/chat", {
     method: "POST",
+    credentials: "include",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
@@ -320,9 +349,6 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
     body: JSON.stringify(request),
   });
 
-  if (!response.ok) {
-    throw new Error(`Chat failed: ${response.status}`);
-  }
-
+  ensureResponseOk(response, "Chat");
   return (await response.json()) as ChatResponse;
 }

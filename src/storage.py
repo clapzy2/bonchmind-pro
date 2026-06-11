@@ -1,13 +1,15 @@
-"""Workspace-scoped file storage helpers (Stage 2: workspace-scoping).
+"""Workspace-scoped file storage helpers.
 
-All user-uploaded materials live under ``docs/<workspace_id>/`` instead of a
-single shared ``docs/`` directory. This module centralizes the helpers needed
-to build and validate those paths so ``KnowledgeBase`` and the service layer
-agree on a single layout.
+Authenticated uploads (Stage 3c+) live under
+``docs/<workspace_id>/<document_id>__<safe_filename>`` — the ``Document``
+record in SQL is the source of truth, ``document_id`` makes the path
+collision-free across re-uploads with the same original name, and the
+``__`` separator keeps the original name human-readable in directory
+listings.
 
-Filenames remain the addressing key within a workspace (per the accepted
-Stage 1/2 decisions); a future stage may switch to ``<document_id>__<name>``
-once the ``Document`` table is the source of truth for stored paths.
+The legacy Gradio entrypoint (``main.py``) has no ``Document`` table and
+keeps the Stage 2 layout ``docs/<workspace_id>/<safe_filename>`` via
+``legacy_workspace_file_path``.
 """
 
 from __future__ import annotations
@@ -54,8 +56,27 @@ def workspace_docs_dir(workspace_id: str) -> str:
     return os.path.join(config.DOCS_DIR, safe_workspace_id)
 
 
-def document_stored_path(workspace_id: str, original_name: str) -> str:
-    """Return the on-disk path for ``original_name`` within ``workspace_id``."""
+def document_stored_path(workspace_id: str, document_id: str, original_name: str) -> str:
+    """Return the on-disk path for a Document.
+
+    Layout: ``docs/<workspace_id>/<document_id>__<safe_filename>``. Two uploads
+    with the same ``original_name`` in the same workspace land on different
+    paths because ``document_id`` is a UUID; the ``Document`` table enforces
+    that there is at most one *active* document per ``(workspace_id, original_name)``
+    via the application-level replace flow.
+    """
+    safe_document_id = sanitize_filename(document_id)
+    safe_name = sanitize_filename(original_name)
+    return os.path.join(workspace_docs_dir(workspace_id), f"{safe_document_id}__{safe_name}")
+
+
+def legacy_workspace_file_path(workspace_id: str, original_name: str) -> str:
+    """Stage 2 layout: ``docs/<workspace_id>/<safe_filename>``.
+
+    Used only by the legacy Gradio UI (``main.py``), which does not create
+    ``Document`` rows. Authenticated API code MUST use
+    :func:`document_stored_path` instead so paths and the SQL table agree.
+    """
     return os.path.join(workspace_docs_dir(workspace_id), sanitize_filename(original_name))
 
 

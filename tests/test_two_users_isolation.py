@@ -14,6 +14,14 @@ from src import app_services, document_service
 from src.db import SessionLocal
 
 
+# Topic used by the summary-isolation tests below. Deliberately a single
+# foreign word so summary_engine's history/topic heuristics route it through
+# generate_direct_topic_summary (the simplest path: one search call, one LLM
+# call) and so _filter_chunks_by_topic_anchors does not drop our synthetic
+# chunks.
+_SUMMARY_TOPIC = "Bluetooth"
+
+
 # ---------------------------------------------------------------------------
 # Workspace-aware FakeKB: per-call captures + per-workspace synthetic sources
 # ---------------------------------------------------------------------------
@@ -493,6 +501,169 @@ def test_regular_user_blocked_from_diagnostics(api_client):
     response = api_client.get("/api/diagnostics/latest")
     assert response.status_code == 403
     assert response.json()["detail"] == "superuser_required"
+
+
+# ---------------------------------------------------------------------------
+# Summary isolation (Stage 4) — two users, same topic, distinct summaries
+# ---------------------------------------------------------------------------
+
+
+class _SummaryFakeKB:
+    """KB stub whose ``search_chunks_for_summary`` returns chunks tagged with
+    ``workspace_id``.
+
+    Every chunk carries a workspace-specific marker string in its ``text``.
+    Combined with ``_EchoLLM`` below, this lets the e2e test assert that
+    Alice's summary contains only Alice's marker — proving that
+    ``workspace_id`` was honoured all the way down to the KB layer.
+    """
+
+    def __init__(self):
+        self.search_calls: list[dict] = []
+        # ``main._get_kb`` checks ``_kb._llm is None`` and calls ``set_llm()``
+        # when so; we pretend the LLM is already attached so the elif branch
+        # is a no-op and we don't have to stub ``set_llm`` here.
+        self._llm = object()
+
+    def search_chunks_for_summary(
+        self,
+        query,
+        file_filter="all",
+        section_filter=None,
+        top_k=None,
+        workspace_id=None,
+    ):
+        self.search_calls.append(
+            {
+                "query": query,
+                "file_filter": file_filter,
+                "section_filter": section_filter,
+                "top_k": top_k,
+                "workspace_id": workspace_id,
+            }
+        )
+        # 5+ chunks in one dense, non-noisy section so the summary-engine
+        # filters (_focus_chunks_on_primary_section, dense window) keep them.
+        return [
+            {
+                "text": (
+                    f"Маркер рабочей области: workspace-marker-{workspace_id}. "
+                    f"Bluetooth используется в workspace {workspace_id}."
+                ),
+                "source_file": "bonchmind.pdf",
+                "section": "Раздел Bluetooth",
+                "chunk_id": chunk_id,
+                "score": 1.0,
+            }
+            for chunk_id in range(1, 6)
+        ]
+
+    # Minimal stubs so chat/materials code paths that may briefly touch the
+    # KB while the test is running do not blow up. The summary tests never
+    # exercise these, but ``runtime.get_kb`` returns the same instance for
+    # every caller in the process.
+    def stats(self, workspace_id=None):
+        return {"total_books": 0, "total_chunks": 0, "books": [], "sections": []}
+
+    def get_available_files(self, workspace_id=None):
+        return []
+
+    def get_file_profile(self, file_name, workspace_id=None):
+        return {"chunk_count": 0, "sections_count": 0, "sections": []}
+
+
+class _EchoLLM:
+    """LLM stub that echoes the prompt back as its answer.
+
+    The summary prompt embeds the chunks' text verbatim, and chunks carry
+    the per-workspace marker, so the marker is guaranteed to appear in the
+    response text. Deterministic and Ollama-free.
+    """
+
+    def __init__(self):
+        self.prompts: list[str] = []
+
+    def call(self, prompt, max_tokens=None, temperature=None):
+        self.prompts.append(prompt)
+        return f"[ECHO]\n{prompt}"
+
+
+def _summary_request_body():
+    return {
+        "selected_file": "Все файлы",
+        "selected_section": "Все разделы",
+        "topic": _SUMMARY_TOPIC,
+        "summary_type": "Средний",
+    }
+
+
+def test_summary_is_scoped_to_caller_workspace(api_client, monkeypatch, tmp_path):
+    """Alice and Bob POST ``/api/summaries`` with the same topic; the
+    response Alice sees must only quote Alice's chunks (workspace-marker)
+    and never Bob's, and vice versa.
+
+    Regression guard for the full Stage 4 chain:
+    ``api_app → app_services.generate_summary_service → main.on_generate_summary
+     → summary_engine.generate_direct_topic_summary → kb.search_chunks_for_summary``.
+    A bug anywhere in that chain that dropped ``workspace_id`` would cause
+    the wrong marker to surface in the response.
+    """
+    monkeypatch.setattr(app_services.config, "DOCS_DIR", str(tmp_path / "docs"))
+    fake_kb = _SummaryFakeKB()
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: fake_kb)
+    monkeypatch.setattr(app_services.runtime, "get_llm", lambda: _EchoLLM())
+
+    # --- Alice ---
+    _register(api_client, "alice@example.com", "Alice")
+    alice_workspace = _whoami(api_client)["personal_workspace"]["id"]
+    alice_resp = api_client.post("/api/summaries", json=_summary_request_body())
+    assert alice_resp.status_code == 200, alice_resp.text
+    alice_text = alice_resp.json()["text"]
+
+    # --- Bob ---
+    api_client.cookies.clear()
+    _register(api_client, "bob@example.com", "Bob")
+    bob_workspace = _whoami(api_client)["personal_workspace"]["id"]
+    bob_resp = api_client.post("/api/summaries", json=_summary_request_body())
+    assert bob_resp.status_code == 200, bob_resp.text
+    bob_text = bob_resp.json()["text"]
+
+    # Different workspaces → different markers → no overlap.
+    assert alice_workspace != bob_workspace
+
+    alice_marker = f"workspace-marker-{alice_workspace}"
+    bob_marker = f"workspace-marker-{bob_workspace}"
+
+    assert alice_marker in alice_text
+    assert bob_marker not in alice_text
+
+    assert bob_marker in bob_text
+    assert alice_marker not in bob_text
+
+
+def test_summary_search_call_carries_caller_workspace_id(api_client, monkeypatch, tmp_path):
+    """Belt-and-braces: assert at the KB boundary that
+    ``search_chunks_for_summary`` was invoked with the caller's workspace_id
+    (and never with DEFAULT_WORKSPACE_ID).
+    """
+    monkeypatch.setattr(app_services.config, "DOCS_DIR", str(tmp_path / "docs"))
+    fake_kb = _SummaryFakeKB()
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: fake_kb)
+    monkeypatch.setattr(app_services.runtime, "get_llm", lambda: _EchoLLM())
+
+    _register(api_client, "alice@example.com", "Alice")
+    alice_workspace = _whoami(api_client)["personal_workspace"]["id"]
+    assert api_client.post("/api/summaries", json=_summary_request_body()).status_code == 200
+
+    api_client.cookies.clear()
+    _register(api_client, "bob@example.com", "Bob")
+    bob_workspace = _whoami(api_client)["personal_workspace"]["id"]
+    assert api_client.post("/api/summaries", json=_summary_request_body()).status_code == 200
+
+    workspace_ids_seen = [call["workspace_id"] for call in fake_kb.search_calls]
+    # generate_direct_topic_summary does exactly one search per call.
+    assert workspace_ids_seen == [alice_workspace, bob_workspace]
+    assert app_services.config.DEFAULT_WORKSPACE_ID not in workspace_ids_seen
 
 
 def test_superuser_reaches_diagnostics(api_client, monkeypatch):

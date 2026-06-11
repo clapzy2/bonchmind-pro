@@ -455,11 +455,18 @@ def on_export_diagnostics_json():
     return export_last_trace_json()
 
 
-def on_generate_summary(selected_file, selected_section, topic, summary_type):
-    """Сгенерировать конспект по выбранному файлу через обработку чанков."""
+def on_generate_summary(workspace_id, selected_file, selected_section, topic, summary_type):
+    """Сгенерировать конспект по выбранному файлу через обработку чанков.
+
+    ``workspace_id`` пробрасывается во все вызовы summary_engine / KB,
+    чтобы конспект строился только по документам авторизованного workspace.
+    Gradio-биндинг подаёт ``config.DEFAULT_WORKSPACE_ID`` (legacy-режим);
+    API-flow подаёт реальный workspace_id из сессии.
+    """
     start_trace(
         kind="summary",
         request={
+            "workspace_id": workspace_id,
             "selected_file": selected_file,
             "selected_section": selected_section,
             "topic": topic,
@@ -488,6 +495,7 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
                 section_filter=section_filter,
                 topic=topic,
                 summary_type=summary_type,
+                workspace_id=workspace_id,
             )
             finish_trace(output=result)
             return result
@@ -506,6 +514,7 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
                     summary_type=summary_type,
                     file_filter=file_filter,
                     section_filter=None,
+                    workspace_id=workspace_id,
                 )
                 finish_trace(output=result)
                 return result
@@ -518,6 +527,7 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
                     summary_type=summary_type,
                     file_filter=file_filter,
                     section_filter=None,
+                    workspace_id=workspace_id,
                 )
                 finish_trace(output=result)
                 return result
@@ -529,12 +539,13 @@ def on_generate_summary(selected_file, selected_section, topic, summary_type):
                 summary_type=summary_type,
                 file_filter=file_filter,
                 section_filter=None,
+                workspace_id=workspace_id,
             )
             finish_trace(output=result)
             return result
 
         params = _summary_generation_params(summary_type)
-        chunks = kb.get_file_chunks(file_filter=file_filter)
+        chunks = kb.get_file_chunks(file_filter=file_filter, workspace_id=workspace_id)
 
         if not chunks:
             result = "НЕТ ИНФОРМАЦИИ - база пуста или файл не проиндексирован."
@@ -705,6 +716,11 @@ def build_gui():
                     interactive=True,
                 )
 
+                # Gradio-режим работает без auth: подаём фиксированный
+                # workspace_id первым входом в on_generate_summary. API
+                # передаёт реальный workspace_id из сессии через app_services.
+                summary_workspace_state = gr.State(config.DEFAULT_WORKSPACE_ID)
+
                 summary_btn = gr.Button("📄 Сгенерировать конспект", variant="primary")
                 gr.Markdown("⚠️ Для больших документов генерация полного конспекта может занять несколько минут.")
                 summary_out = gr.Textbox(
@@ -738,7 +754,13 @@ def build_gui():
                 )
                 summary_btn.click(
                     on_generate_summary,
-                    inputs=[summary_file, summary_section, summary_topic, summary_type],
+                    inputs=[
+                        summary_workspace_state,
+                        summary_file,
+                        summary_section,
+                        summary_topic,
+                        summary_type,
+                    ],
                     outputs=summary_out,
                 )
 

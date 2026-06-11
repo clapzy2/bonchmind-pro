@@ -656,12 +656,11 @@ def generate_summary_service(workspace_id: str, request: SummaryRequest):
     The argument is accepted now so the API signature stays consistent and
     the Stage 4 change becomes a service-layer-only fix.
     """
-    del workspace_id  # accepted for API symmetry; consumed in Stage 4.
-
     main._llm = runtime.get_llm()
     main._kb = runtime.get_kb()
 
     text = main.on_generate_summary(
+        workspace_id,
         _normalize_selected_file(request.selected_file),
         request.selected_section,
         request.topic,

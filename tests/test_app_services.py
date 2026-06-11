@@ -583,7 +583,8 @@ def test_generate_summary_service_calls_summary_handler(monkeypatch):
     assert response.diagnostics == "trace text"
     assert app_services.main._llm == "llm"
     assert app_services.main._kb == "kb"
-    assert calls[0][0] == "a.pdf"
+    assert calls[0][0] == WORKSPACE_ID
+    assert calls[0][1] == "a.pdf"
 
 
 def test_generate_summary_service_normalizes_all_materials_label(monkeypatch):
@@ -610,7 +611,8 @@ def test_generate_summary_service_normalizes_all_materials_label(monkeypatch):
         ),
     )
 
-    assert calls[0][0] == "Все файлы"
+    assert calls[0][0] == WORKSPACE_ID
+    assert calls[0][1] == "Все файлы"
 
 
 def test_export_summary_docx_service_uses_export_utils(monkeypatch):

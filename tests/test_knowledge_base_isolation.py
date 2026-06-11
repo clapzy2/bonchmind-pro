@@ -60,14 +60,25 @@ def write_doc(tmp_path, name, text):
 
 
 def test_chunk_id_differs_across_workspaces_for_same_text():
+    """Stage 3c: _chunk_id is now (workspace_id, document_id, text)."""
     same_text = "Один и тот же фрагмент текста для двух разных рабочих пространств."
 
-    id_a = KnowledgeBase._chunk_id("workspace-a", "book.txt", same_text)
-    id_b = KnowledgeBase._chunk_id("workspace-b", "book.txt", same_text)
+    id_a = KnowledgeBase._chunk_id("workspace-a", "doc-1", same_text)
+    id_b = KnowledgeBase._chunk_id("workspace-b", "doc-1", same_text)
 
     assert id_a != id_b
     # Stable for repeated calls with the same arguments.
-    assert id_a == KnowledgeBase._chunk_id("workspace-a", "book.txt", same_text)
+    assert id_a == KnowledgeBase._chunk_id("workspace-a", "doc-1", same_text)
+
+
+def test_chunk_id_differs_across_documents_for_same_text_in_one_workspace():
+    """Replace-on-conflict relies on chunk_id changing when document_id does."""
+    same_text = "Замена документа должна получить новые ID чанков."
+
+    id_old = KnowledgeBase._chunk_id("workspace-a", "doc-old", same_text)
+    id_new = KnowledgeBase._chunk_id("workspace-a", "doc-new", same_text)
+
+    assert id_old != id_new
 
 
 def test_add_book_same_text_indexed_independently_per_workspace(tmp_path):

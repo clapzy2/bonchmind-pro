@@ -125,7 +125,7 @@ def on_add_book(files):
         results = []
         for file in files:
             src = file.name if hasattr(file, "name") else str(file)
-            dest = storage.document_stored_path(config.DEFAULT_WORKSPACE_ID, os.path.basename(src))
+            dest = storage.legacy_workspace_file_path(config.DEFAULT_WORKSPACE_ID, os.path.basename(src))
             shutil.copy2(src, dest)
             results.append(kb.add_book(dest))
         # gc.collect()

@@ -198,7 +198,7 @@ def test_material_upload_endpoint(authed_client, monkeypatch):
     monkeypatch.setattr(
         api_app.services,
         "start_upload_material_service",
-        lambda workspace_id, file_name, content: MaterialActionResponse(
+        lambda workspace_id, user_id, file_name, content: MaterialActionResponse(
             ok=True,
             message=f"uploaded:{file_name}:{len(content)}",
             material_name=file_name,
@@ -430,6 +430,12 @@ def test_endpoints_pass_callers_personal_workspace_id(authed_client, monkeypatch
     def _capture(name):
         def stub(workspace_id, *args, **kwargs):
             captured[name] = workspace_id
+            # start_upload_material_service has the (workspace_id, user_id, file_name, content)
+            # signature; the others take (workspace_id, ...). Drop ``user_id``
+            # before forwarding so the small stub factory below doesn't have
+            # to special-case it.
+            if name == "start_upload_material_service" and args:
+                args = args[1:]
             return _stub_return_for(name, *args, **kwargs)
         return stub
 
@@ -560,3 +566,114 @@ def test_material_progress_endpoint_does_not_leak_other_workspaces(api_client):
     assert alice_state["current_file"] == "alice_secret.pdf"
 
     app_services.reset_material_progress_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# Stage 3c: Document table is the source of truth for materials
+# ---------------------------------------------------------------------------
+
+
+def test_delete_does_not_touch_another_users_document(api_client, monkeypatch, tmp_path):
+    """Two users register, each uploads ``shared.pdf``; Bob deleting his copy
+    must leave Alice's Document/file/chunks intact (and vice versa).
+
+    The KB call surface is mocked with FakeKB to keep the test fast — what
+    matters here is the SQL + filesystem isolation, not the actual indexer.
+    """
+    from src import app_services, document_service
+    from src.db import SessionLocal
+    from tests.test_app_services import FakeKB
+
+    monkeypatch.setattr(app_services.config, "DOCS_DIR", str(tmp_path / "docs"))
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: FakeKB())
+
+    def register_and_upload(email: str, body: bytes) -> tuple[str, str]:
+        api_client.cookies.clear()
+        api_client.post(
+            "/api/auth/register",
+            json={
+                "email": email,
+                "password": "passwordpassword12",
+                "display_name": email.split("@", 1)[0],
+            },
+        )
+        workspace_id = api_client.get("/api/auth/me").json()["personal_workspace"]["id"]
+        upload_response = api_client.post(
+            "/api/materials/upload",
+            files={"file": ("shared.pdf", body, "application/pdf")},
+        )
+        assert upload_response.status_code == 200
+        # /api/materials/upload returns as soon as the background indexing
+        # thread is queued; join on it so the Document row is guaranteed
+        # committed before the test asserts on it.
+        if app_services._material_job_thread is not None:
+            app_services._material_job_thread.join(timeout=10)
+        return email, workspace_id
+
+    alice_email, alice_workspace = register_and_upload("alice-doc@example.com", b"alice body")
+    bob_email, bob_workspace = register_and_upload("bob-doc@example.com", b"bob body")
+
+    db = SessionLocal()
+    try:
+        alice_docs = document_service.list_documents(db, alice_workspace)
+        bob_docs = document_service.list_documents(db, bob_workspace)
+    finally:
+        db.close()
+    assert len(alice_docs) == 1
+    assert len(bob_docs) == 1
+    alice_doc = alice_docs[0]
+    bob_doc = bob_docs[0]
+
+    # Bob (currently logged in) deletes "shared.pdf" — only Bob's row goes.
+    delete_response = api_client.delete("/api/materials/shared.pdf")
+    assert delete_response.status_code == 200
+    if app_services._material_job_thread is not None:
+        app_services._material_job_thread.join(timeout=10)
+
+    db = SessionLocal()
+    try:
+        alice_after = document_service.list_documents(db, alice_workspace)
+        bob_after = document_service.list_documents(db, bob_workspace)
+    finally:
+        db.close()
+    assert [d.id for d in alice_after] == [alice_doc.id]
+    assert bob_after == []
+
+    # Files on disk: Alice's stays, Bob's is gone.
+    import os
+    assert os.path.exists(alice_doc.stored_path)
+    assert not os.path.exists(bob_doc.stored_path)
+
+
+def test_materials_response_includes_document_id(api_client, monkeypatch, tmp_path):
+    """The /api/materials list must surface ``id`` so the frontend can move
+    from name-based addressing to document_id-based addressing."""
+    from src import app_services
+    from tests.test_app_services import FakeKB
+
+    monkeypatch.setattr(app_services.config, "DOCS_DIR", str(tmp_path / "docs"))
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: FakeKB())
+
+    api_client.post(
+        "/api/auth/register",
+        json={
+            "email": "mat-id@example.com",
+            "password": "passwordpassword12",
+            "display_name": "Mat",
+        },
+    )
+    api_client.post(
+        "/api/materials/upload",
+        files={"file": ("book.pdf", b"hello", "application/pdf")},
+    )
+    if app_services._material_job_thread is not None:
+        app_services._material_job_thread.join(timeout=10)
+
+    response = api_client.get("/api/materials")
+    materials = response.json()["materials"]
+    assert len(materials) == 1
+    entry = materials[0]
+    assert entry["name"] == "book.pdf"
+    # Document.id is a UUID4 string of length 36.
+    assert isinstance(entry["id"], str) and len(entry["id"]) == 36
+    assert entry["status"] == "ready"

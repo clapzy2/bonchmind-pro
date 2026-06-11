@@ -14,10 +14,18 @@ export type SystemStatus = {
 };
 
 export type MaterialInfo = {
+  /**
+   * Document.id (UUID, 36 chars) — Stage 3c. Optional/empty for legacy
+   * responses without a backing Document row; the frontend should prefer
+   * ``id`` over ``name`` when both are present.
+   */
+  id?: string;
   name: string;
   sections_count: number;
   quality_label: string;
   quality_reason: string;
+  /** processing | ready | error — Stage 3c Document.status. */
+  status?: string;
 };
 
 export type MaterialActionResponse = {

@@ -87,9 +87,20 @@ def materials(workspace_id: WorkspaceId):
 
 
 @app.post("/api/materials/upload", response_model=MaterialActionResponse)
-async def material_upload(workspace_id: WorkspaceId, file: UploadFile = File(...)):
+async def material_upload(
+    workspace_id: WorkspaceId,
+    current_user: Annotated[User, Depends(get_current_user)],
+    file: UploadFile = File(...),
+):
+    """Upload requires both ``workspace_id`` (where the file is indexed) and
+    ``user.id`` (recorded as ``Document.owner_user_id``). ``workspace_id`` is
+    transitively derived from ``current_user`` via ``get_current_workspace_id``,
+    but we keep ``current_user`` as a separate dependency so the owner id is
+    explicit at the call site."""
     content = await file.read()
-    return services.start_upload_material_service(workspace_id, file.filename, content)
+    return services.start_upload_material_service(
+        workspace_id, current_user.id, file.filename, content
+    )
 
 
 @app.get("/api/materials/progress", response_model=MaterialProgressResponse)

@@ -87,26 +87,42 @@ class KnowledgeBase:
         return hashlib.md5(text.strip().encode()).hexdigest()
 
     @staticmethod
-    def _chunk_id(workspace_id, source_file, text):
-        """ID чанка в ChromaDB: уникален в пределах workspace+файла.
+    def _chunk_id(workspace_id, document_id, text):
+        """ID чанка в ChromaDB: уникален в пределах workspace+документа.
 
-        Включение workspace_id в хеш решает две проблемы single-tenant
-        реализации: (1) одинаковый текст в разных workspace больше не
-        схлопывается в один и тот же ID (раньше второй пользователь "терял"
-        чанки из-за глобальной дедупликации); (2) ID остаётся стабильным для
-        повторной индексации того же файла в том же workspace.
+        Stage 3c заменяет ``source_file`` на ``document_id`` (UUID из таблицы
+        ``Document``) во входе хеша. ``document_id`` стабилен на протяжении
+        жизни записи, поэтому ID чанка устойчив к будущему переименованию
+        ``original_name`` и к замене документа (новая запись получает
+        независимый набор chunk-ID).
         """
-        raw = f"{workspace_id}:{source_file}:{text.strip()}"
+        raw = f"{workspace_id}:{document_id}:{text.strip()}"
         return hashlib.md5(raw.encode()).hexdigest()
 
     # Индексация файла
-    def add_book(self, file_path, workspace_id=config.DEFAULT_WORKSPACE_ID, progress_callback=None):
-        """Загрузить файл, разбить на чанки, добавить в ChromaDB"""
+    def add_book(
+        self,
+        file_path,
+        workspace_id=config.DEFAULT_WORKSPACE_ID,
+        document_id=None,
+        progress_callback=None,
+    ):
+        """Загрузить файл, разбить на чанки, добавить в ChromaDB.
+
+        ``document_id`` — UUID записи ``Document`` (Stage 3c). Когда метод
+        вызывается из legacy/Gradio-пути без записи ``Document``, передаётся
+        ``None`` и ``document_id`` подставляется как ``original_filename``,
+        чтобы сохранить старое поведение дедупликации по имени файла.
+        """
         def report(**payload):
             if progress_callback:
                 progress_callback(**payload)
 
         filename = os.path.basename(file_path)
+        # Legacy bridge: anonymous Gradio uploads identify the document by
+        # filename, while Stage 3c authenticated uploads pass an explicit UUID.
+        effective_document_id = document_id or filename
+
         lower = file_path.lower()
         supported = any(lower.endswith(fmt) for fmt in config.SUPPORTED_FORMATS)
         if not supported:
@@ -134,7 +150,7 @@ class KnowledgeBase:
         splitter = get_splitter()
         if self._col.count() > 0:
             existing = self._col.get(
-                where={"$and": [{"workspace_id": workspace_id}, {"source_file": filename}]},
+                where={"$and": [{"workspace_id": workspace_id}, {"document_id": effective_document_id}]},
                 include=[],
             )
             existing_ids = set(existing.get("ids", []) or [])
@@ -149,13 +165,14 @@ class KnowledgeBase:
             for chunk in chunks:
                 # Добавляем название раздела в начало чанка
                 chunk_with_ctx = f"[{section_name}]\n{chunk}" if section_name else chunk
-                h = self._chunk_id(workspace_id, filename, chunk_with_ctx)
+                h = self._chunk_id(workspace_id, effective_document_id, chunk_with_ctx)
                 if h not in existing_ids and h not in seen:
                     seen.add(h)
                     new_chunks.append(chunk_with_ctx)
                     new_ids.append(h)
                     new_metas.append({
                         "workspace_id": workspace_id,
+                        "document_id": effective_document_id,
                         "source_file": filename,
                         "source": file_path,
                         "section": section_name or "",
@@ -236,8 +253,39 @@ class KnowledgeBase:
         gc.collect()
         return "✅ База очищена"
 
+    def remove_chunks(self, workspace_id, document_id):
+        """Удалить все чанки конкретного документа из коллекции (Stage 3c).
+
+        Точечнее, чем :meth:`remove_book`: ищет по ``document_id`` метаданных,
+        а не по ``source_file``. Используется ``document_service`` при
+        delete/reindex/replace — наша основная точка входа для аутентифи-
+        цированного потока.
+        """
+        if not document_id:
+            return "document_id не указан"
+
+        if self._col.count() == 0:
+            return f"⏭️ document_id={document_id} - база уже пуста"
+
+        existing = self._col.get(
+            where={"$and": [{"workspace_id": workspace_id}, {"document_id": document_id}]},
+            include=[],
+        )
+
+        ids = existing.get("ids", []) or []
+        if not ids:
+            return f"⏭️ document_id={document_id} - в индексе не найден"
+
+        self._col.delete(ids=ids)
+        gc.collect()
+        return f"🗑️ document_id={document_id}: удалено {len(ids)} фрагментов"
+
     def remove_book(self, file_name, workspace_id=config.DEFAULT_WORKSPACE_ID):
-        """Удалить все чанки конкретного файла workspace из коллекции."""
+        """Удалить все чанки файла по ``source_file`` метаданным (legacy).
+
+        Используется Gradio-потоком, где нет ``document_id``. Аутентифицированный
+        API-flow Stage 3c использует :meth:`remove_chunks`.
+        """
         target_name = os.path.basename(str(file_name or "")).strip()
         if not target_name:
             return "Файл не указан"

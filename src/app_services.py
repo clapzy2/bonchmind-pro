@@ -27,7 +27,7 @@ from threading import Lock, Thread
 
 import config
 import main
-from src import runtime, storage
+from src import document_service, runtime
 from src.api_models import (
     ChatMessage,
     ChatRequest,
@@ -43,6 +43,7 @@ from src.api_models import (
     SummaryResponse,
     SystemStatus,
 )
+from src.db import SessionLocal
 from src.chat_utils import (
     get_last_qa,
     history_to_context,
@@ -182,12 +183,50 @@ def _material_quality(sections_count, chunk_count):
 
 
 def list_materials(workspace_id: str):
+    """Stage 3c: enumerate materials from the ``Document`` table.
+
+    Chroma stats stay as the per-chunk truth (chunk_count, sections_count for
+    quality badges), but the *list* of materials comes from SQL — so an
+    error-status upload is visible to the user even though it has no chunks
+    yet, and replace-on-conflict keeps the listing free of duplicates.
+    """
     kb = runtime.get_kb()
-    stats = kb.stats(workspace_id=workspace_id)
+    db = SessionLocal()
+    try:
+        documents = document_service.list_documents(db, workspace_id)
+    finally:
+        db.close()
 
     materials = []
-    for book in stats.get("books", []):
-        profile = kb.get_file_profile(book, workspace_id=workspace_id)
+    for doc in documents:
+        if doc.status == document_service.STATUS_ERROR:
+            materials.append(
+                MaterialInfo(
+                    id=doc.id,
+                    name=doc.original_name,
+                    sections_count=0,
+                    quality_label="error",
+                    quality_reason=doc.error_message
+                    or "Материал не удалось проиндексировать. Попробуйте загрузить снова.",
+                    status=doc.status,
+                )
+            )
+            continue
+
+        if doc.status == document_service.STATUS_PROCESSING:
+            materials.append(
+                MaterialInfo(
+                    id=doc.id,
+                    name=doc.original_name,
+                    sections_count=0,
+                    quality_label="processing",
+                    quality_reason="Идёт индексация материала. Обновите список через минуту.",
+                    status=doc.status,
+                )
+            )
+            continue
+
+        profile = kb.get_file_profile(doc.original_name, workspace_id=workspace_id)
         sections_count = int(profile.get("sections_count", 0) or 0)
         chunk_count = int(profile.get("chunk_count", 0) or 0)
         quality_label, quality_reason = _material_quality(sections_count, chunk_count)
@@ -196,10 +235,12 @@ def list_materials(workspace_id: str):
 
         materials.append(
             MaterialInfo(
-                name=book,
+                id=doc.id,
+                name=doc.original_name,
                 sections_count=sections_count,
                 quality_label=quality_label,
                 quality_reason=quality_reason,
+                status=doc.status,
             )
         )
 
@@ -311,21 +352,6 @@ def reset_material_progress_for_tests():
         _material_progress_states.clear()
 
 
-def _kb_add_book(workspace_id, kb, file_path):
-    return kb.add_book(
-        file_path,
-        workspace_id=workspace_id,
-        progress_callback=lambda **payload: _update_material_progress(workspace_id, **payload),
-    )
-
-
-def _kb_index_all_books(workspace_id, kb):
-    return kb.index_all_books(
-        workspace_id=workspace_id,
-        progress_callback=lambda **payload: _update_material_progress(workspace_id, **payload),
-    )
-
-
 def _launch_material_job(workspace_id, operation, message, target, material_name=""):
     global _material_job_thread
 
@@ -365,12 +391,14 @@ def _normalize_material_name(file_name):
     return os.path.basename(str(file_name or "")).strip()
 
 
-def _material_path(workspace_id: str, file_name: str) -> str:
-    normalized_name = _normalize_material_name(file_name)
-    return storage.document_stored_path(workspace_id, normalized_name)
+def upload_material_service(workspace_id: str, user_id: str, file_name, content):
+    """Persist + index a freshly uploaded material via :mod:`document_service`.
 
-
-def upload_material_service(workspace_id: str, file_name, content):
+    Validation (name present, extension allowed, size below
+    ``MAX_UPLOAD_BYTES``) happens here so the user gets a synchronous error
+    response without ever creating a Document row for clearly-rejected
+    uploads.
+    """
     normalized_name = _normalize_material_name(file_name)
     if not normalized_name:
         return MaterialActionResponse(ok=False, message="Не выбран файл для загрузки.")
@@ -392,11 +420,6 @@ def upload_material_service(workspace_id: str, file_name, content):
             material_name=normalized_name,
         )
 
-    os.makedirs(storage.workspace_docs_dir(workspace_id), exist_ok=True)
-
-    kb = runtime.get_kb()
-    destination = _material_path(workspace_id, normalized_name)
-    existed_before = os.path.exists(destination)
     _start_material_progress(
         workspace_id,
         operation="upload",
@@ -404,62 +427,51 @@ def upload_material_service(workspace_id: str, file_name, content):
         current_file=normalized_name,
     )
 
+    db = SessionLocal()
     try:
-        with open(destination, "wb") as output_file:
-            output_file.write(content)
-        _update_material_progress(
-            workspace_id,
-            phase="saving",
-            progress=10,
-            message=f"Файл {normalized_name} сохранен в библиотеку",
-            current_file=normalized_name,
-        )
-
-        if existed_before:
-            kb.remove_book(normalized_name, workspace_id=workspace_id)
-            _update_material_progress(
-                workspace_id,
-                phase="cleanup",
-                progress=18,
-                message="Убираю старую версию материала из индекса",
-                current_file=normalized_name,
+        try:
+            doc = document_service.create_document(
+                db,
+                workspace_id=workspace_id,
+                owner_user_id=user_id,
+                original_name=normalized_name,
+                content=content,
             )
+        except Exception as error:
+            _fail_material_progress(workspace_id, str(error), current_file=normalized_name)
+            raise
+    finally:
+        db.close()
 
-        result = _kb_add_book(workspace_id, kb, destination)
-        ok = str(result).startswith("✅") or str(result).startswith("⏭️")
-        if not ok and os.path.exists(destination):
-            try:
-                os.remove(destination)
-            except OSError:
-                pass
-
-        if ok:
-            _finish_material_progress(
-                workspace_id,
-                message=f"{normalized_name} готов к поиску и конспектам",
-                current_file=normalized_name,
-            )
-        else:
-            _fail_material_progress(workspace_id, result, current_file=normalized_name)
-
+    if doc.status == document_service.STATUS_ERROR:
+        message = doc.error_message or f"{normalized_name}: индексация не удалась."
+        _fail_material_progress(workspace_id, message, current_file=normalized_name)
         return MaterialActionResponse(
-            ok=ok,
-            message=result,
+            ok=False,
+            message=message,
             material_name=normalized_name,
         )
-    except Exception as error:
-        _fail_material_progress(workspace_id, str(error), current_file=normalized_name)
-        raise
+
+    _finish_material_progress(
+        workspace_id,
+        message=f"{normalized_name} готов к поиску и конспектам",
+        current_file=normalized_name,
+    )
+    return MaterialActionResponse(
+        ok=True,
+        message=f"✅ {normalized_name}: материал загружен и проиндексирован.",
+        material_name=normalized_name,
+    )
 
 
-def start_upload_material_service(workspace_id: str, file_name, content):
+def start_upload_material_service(workspace_id: str, user_id: str, file_name, content):
     normalized_name = _normalize_material_name(file_name)
     return _launch_material_job(
         workspace_id,
         operation="upload",
         message=f"Запустил загрузку и индексацию {normalized_name}",
         material_name=normalized_name,
-        target=lambda: upload_material_service(workspace_id, file_name, content),
+        target=lambda: upload_material_service(workspace_id, user_id, file_name, content),
     )
 
 
@@ -468,48 +480,39 @@ def delete_material_service(workspace_id: str, file_name):
     if not normalized_name:
         return MaterialActionResponse(ok=False, message="Материал не указан.")
 
-    kb = runtime.get_kb()
-    file_path = _material_path(workspace_id, normalized_name)
-    existed_on_disk = os.path.exists(file_path)
     _start_material_progress(
         workspace_id,
         operation="delete",
         message=f"Удаляю {normalized_name} из библиотеки",
         current_file=normalized_name,
     )
-    remove_message = kb.remove_book(normalized_name, workspace_id=workspace_id)
-    _update_material_progress(
-        workspace_id,
-        phase="cleanup",
-        progress=60,
-        message="Удаляю фрагменты из индекса",
-        current_file=normalized_name,
-    )
 
-    if existed_on_disk:
-        os.remove(file_path)
-
-    ok = existed_on_disk or "удалено" in remove_message.lower()
-    if not ok:
-        _fail_material_progress(
-            workspace_id,
-            f"{normalized_name} не найден в библиотеке.",
-            current_file=normalized_name,
-        )
-        return MaterialActionResponse(
-            ok=False,
-            message=f"{normalized_name} не найден в библиотеке.",
-            material_name=normalized_name,
-        )
+    db = SessionLocal()
+    try:
+        doc = document_service.find_document_by_name(db, workspace_id, normalized_name)
+        if doc is None:
+            _fail_material_progress(
+                workspace_id,
+                f"{normalized_name} не найден в библиотеке.",
+                current_file=normalized_name,
+            )
+            return MaterialActionResponse(
+                ok=False,
+                message=f"{normalized_name} не найден в библиотеке.",
+                material_name=normalized_name,
+            )
+        document_service.delete_document(db, workspace_id, doc.id)
+    finally:
+        db.close()
 
     _finish_material_progress(
         workspace_id,
-        message=f"{normalized_name} удален из библиотеки",
+        message=f"{normalized_name} удалён из библиотеки",
         current_file=normalized_name,
     )
     return MaterialActionResponse(
         ok=True,
-        message=f"{remove_message}. Файл убран из библиотеки.",
+        message=f"🗑️ {normalized_name}: удалено. Файл убран из библиотеки.",
         material_name=normalized_name,
     )
 
@@ -526,65 +529,88 @@ def start_delete_material_service(workspace_id: str, file_name):
 
 
 def reindex_material_service(workspace_id: str, file_name=None):
-    kb = runtime.get_kb()
-
     normalized_name = _normalize_material_name(file_name)
-    if normalized_name:
-        file_path = _material_path(workspace_id, normalized_name)
-        if not os.path.exists(file_path):
-            return MaterialActionResponse(
-                ok=False,
-                message=f"{normalized_name} не найден в папке docs.",
-                material_name=normalized_name,
-            )
 
+    # Single-file reindex: route through document_service so the existing
+    # Document row is reused (and Chroma rebuilt by document_id).
+    if normalized_name:
         _start_material_progress(
             workspace_id,
             operation="reindex_material",
             message=f"Переиндексирую {normalized_name}",
             current_file=normalized_name,
         )
-        kb.remove_book(normalized_name, workspace_id=workspace_id)
-        _update_material_progress(
+
+        db = SessionLocal()
+        try:
+            doc = document_service.find_document_by_name(db, workspace_id, normalized_name)
+            if doc is None:
+                _fail_material_progress(
+                    workspace_id,
+                    f"{normalized_name} не найден в библиотеке.",
+                    current_file=normalized_name,
+                )
+                return MaterialActionResponse(
+                    ok=False,
+                    message=f"{normalized_name} не найден в библиотеке.",
+                    material_name=normalized_name,
+                )
+            refreshed = document_service.reindex_document(db, workspace_id, doc.id)
+        finally:
+            db.close()
+
+        if refreshed is None or refreshed.status == document_service.STATUS_ERROR:
+            message = (
+                (refreshed.error_message if refreshed else "")
+                or f"{normalized_name}: переиндексация не удалась."
+            )
+            _fail_material_progress(workspace_id, message, current_file=normalized_name)
+            return MaterialActionResponse(
+                ok=False,
+                message=message,
+                material_name=normalized_name,
+            )
+
+        _finish_material_progress(
             workspace_id,
-            phase="cleanup",
-            progress=15,
-            message="Снимаю старые фрагменты материала",
+            message=f"{normalized_name} переиндексирован",
             current_file=normalized_name,
         )
-        result = _kb_add_book(workspace_id, kb, file_path)
-        ok = str(result).startswith("✅") or str(result).startswith("⏭️")
-        if ok:
-            _finish_material_progress(
-                workspace_id,
-                message=f"{normalized_name} переиндексирован",
-                current_file=normalized_name,
-            )
-        else:
-            _fail_material_progress(workspace_id, result, current_file=normalized_name)
         return MaterialActionResponse(
-            ok=ok,
-            message=result,
+            ok=True,
+            message=f"✅ {normalized_name}: переиндексировано.",
             material_name=normalized_name,
         )
 
+    # Full-library reindex: walk every Document, rebuild its chunks. The KB
+    # is wiped per-workspace once at the start so orphaned chunks (left over
+    # by a previous bug) are also cleared.
+    kb = runtime.get_kb()
     _start_material_progress(
         workspace_id,
         operation="reindex_library",
         message="Полностью пересобираю библиотеку",
     )
-    result = kb.clear(workspace_id=workspace_id)
+    kb.clear(workspace_id=workspace_id)
     _update_material_progress(
         workspace_id,
         phase="cleanup",
         progress=5,
         message="Очищаю текущий индекс",
     )
-    index_result = _kb_index_all_books(workspace_id, kb)
+
+    db = SessionLocal()
+    try:
+        documents = document_service.list_documents(db, workspace_id)
+        for doc in documents:
+            document_service.reindex_document(db, workspace_id, doc.id)
+    finally:
+        db.close()
+
     _finish_material_progress(workspace_id, message="Библиотека полностью переиндексирована")
     return MaterialActionResponse(
         ok=True,
-        message=f"{result}\n{index_result}",
+        message=f"📚 Переиндексировано документов: {len(documents)}",
     )
 
 

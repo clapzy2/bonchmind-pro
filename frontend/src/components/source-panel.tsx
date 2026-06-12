@@ -27,15 +27,22 @@ function buildCoverageCards(lastRun: SummaryResponse | null): CoverageCard[] {
     return [];
   }
 
-  return plannedGroups.slice(0, 4).map((group) => {
-    const sections = Array.from(new Set(group.chunks.map((chunk) => chunk.section).filter(Boolean)));
+  // Only surface plan items that are actually backed by chunks. The planner
+  // emits items even when retrieval finds nothing (e.g. an off-topic request
+  // against an unrelated material); presenting those empty groups as "опора
+  // ответа" is misleading — Stage 7d smoke caught exactly this.
+  return plannedGroups
+    .filter((group) => group.chunks.length > 0)
+    .slice(0, 4)
+    .map((group) => {
+      const sections = Array.from(new Set(group.chunks.map((chunk) => chunk.section).filter(Boolean)));
 
-    return {
-      title: group.item || "Пункт плана",
-      meta: sections.slice(0, 2).join("; ") || "Без точных разделов",
-      detail: `${group.chunks.length} фрагм. поддерживают этот блок ответа.`,
-    };
-  });
+      return {
+        title: group.item || "Пункт плана",
+        meta: sections.slice(0, 2).join("; ") || "Без точных разделов",
+        detail: `${group.chunks.length} фрагм. поддерживают этот блок ответа.`,
+      };
+    });
 }
 
 const panelCopy: Record<WorkspaceSection, { eyebrow: string; title: string; body: string; icon: typeof Sparkles }> = {
@@ -61,6 +68,9 @@ const panelCopy: Record<WorkspaceSection, { eyebrow: string; title: string; body
 
 export function SourcePanel({ activeSection, status, lastRun }: SourcePanelProps) {
   const coverageCards = buildCoverageCards(lastRun);
+  // A run happened but nothing backed it — distinct from "no run yet" so the
+  // panel can say "не нашлось" instead of "появится после генерации".
+  const ranWithoutCoverage = Boolean(lastRun) && coverageCards.length === 0;
   const copy = panelCopy[activeSection];
   const Icon = copy.icon;
 
@@ -84,7 +94,9 @@ export function SourcePanel({ activeSection, status, lastRun }: SourcePanelProps
           <div className="mt-2 text-sm muted">
             {coverageCards.length > 0
               ? `Есть ${coverageCards.length} ключевых блока покрытия, которые можно быстро проверить глазами.`
-              : "После первой генерации здесь появятся разделы и фрагменты, которые поддержали конспект."}
+              : ranWithoutCoverage
+                ? "По последней теме подтверждающих фрагментов не нашлось. Стоит уточнить тему или выбрать другой материал."
+                : "После первой генерации здесь появятся разделы и фрагменты, которые поддержали конспект."}
           </div>
         </div>
 
@@ -99,7 +111,9 @@ export function SourcePanel({ activeSection, status, lastRun }: SourcePanelProps
             ))
           ) : (
             <div className="rounded-xl border border-dashed border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4 text-sm muted">
-              Этот блок станет полезным сразу после первого успешного конспекта.
+              {ranWithoutCoverage
+                ? "По этой теме фрагменты не найдены — похоже, материал не относится к запросу."
+                : "Этот блок станет полезным сразу после первого успешного конспекта."}
             </div>
           )}
         </div>

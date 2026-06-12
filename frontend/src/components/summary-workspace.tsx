@@ -193,6 +193,11 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
   const plannedGroups = isChunkGroupArray(result?.trace?.chunks?.planned_chunk_groups)
     ? result.trace?.chunks?.planned_chunk_groups
     : [];
+  // A plan item only counts as "coverage" if it is actually backed by
+  // chunks. When retrieval finds nothing, the planner still emits items
+  // (e.g. an off-topic question against an unrelated material), and showing
+  // those as supported is misleading — Stage 7d smoke surfaced exactly this.
+  const coveredGroups = plannedGroups.filter((group) => group.chunks.length > 0);
   const llmCalls = result?.trace?.llm_calls?.length ?? 0;
   const elapsedSeconds = typeof result?.trace?.elapsed_sec === "number" ? Math.round(result.trace.elapsed_sec) : null;
   const fragmentCount = plannedGroups.reduce((total, group) => total + group.chunks.length, 0);
@@ -278,7 +283,7 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
           <button
             className="bm-button-secondary h-12 px-6 text-sm font-bold text-white disabled:cursor-not-allowed disabled:text-white/55"
             type="button"
-            disabled={!plannedGroups.length}
+            disabled={!coveredGroups.length}
             onClick={() => setShowSources((value) => !value)}
           >
             <Search className="h-4 w-4" />
@@ -350,7 +355,7 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
         />
       ) : null}
 
-      {showSources && plannedGroups.length > 0 ? (
+      {showSources && coveredGroups.length > 0 ? (
         <section className="bm-surface rounded-xl p-6 shadow-soft">
           <div className="mb-5">
             <p className="text-sm font-semibold text-brand">Проверка покрытия</p>
@@ -361,7 +366,7 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
           </div>
 
           <div className="space-y-4">
-            {plannedGroups.map((group) => {
+            {coveredGroups.map((group) => {
               const sections = Array.from(
                 new Set(group.chunks.map((chunk) => chunk.section).filter(Boolean)),
               );

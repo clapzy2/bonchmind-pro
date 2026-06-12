@@ -21,12 +21,13 @@ chardet>=5.0.0
 # Экспорт
 python-pptx>=0.6.21
 
-# GUI
-gradio>=4.0.0
-
 # API backend
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
+# python-multipart is required by FastAPI's ``File`` / ``UploadFile`` parsing
+# (the /api/materials/upload endpoint). It used to come transitively with
+# gradio; after Stage 6d dropped gradio it has to be pinned explicitly.
+python-multipart>=0.0.9
 pydantic>=2.0.0
 pydantic[email]>=2.0.0
 

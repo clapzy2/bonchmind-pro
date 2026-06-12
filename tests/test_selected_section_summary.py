@@ -1,5 +1,10 @@
 from src.summary_engine import generate_direct_topic_summary, generate_selected_section_summary
 
+# Stage 6e: ``workspace_id`` is required at every call site. These tests use
+# FakeKB that doesn't care about isolation, so a single shared constant is
+# enough.
+TEST_WORKSPACE_ID = "ws-section-test"
+
 
 class FakeKnowledgeBase:
     def __init__(self):
@@ -52,6 +57,7 @@ def test_selected_section_with_topic_uses_search_inside_section():
         section_filter="Глава 2",
         topic="Теоретические основы передачи данных",
         summary_type="Средний",
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert kb.used_search
@@ -92,6 +98,7 @@ def test_selected_section_with_topic_sends_most_relevant_chunks_first():
         section_filter="Глава 4",
         topic="Широкополосные беспроводные сети",
         summary_type="Средний",
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert llm.last_prompt.index("WiMAX") < llm.last_prompt.index("IEEE 802.11")
@@ -107,6 +114,7 @@ def test_direct_topic_summary_sends_most_relevant_chunks_first():
         topic="Широкополосные беспроводные сети",
         summary_type="Средний",
         file_filter="networks.pdf",
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert "Режим: прямой тематический поиск" in result
@@ -173,6 +181,7 @@ def test_direct_topic_summary_focuses_on_primary_section():
         topic="Широкополосные беспроводные сети",
         summary_type="Средний",
         file_filter="networks.pdf",
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert "Разделы источников: Глава 4" in result
@@ -228,6 +237,7 @@ def test_selected_section_with_topic_filters_neighbor_chunks_by_anchors():
         section_filter="Глава 2",
         topic="Теоретические основы передачи данных",
         summary_type="Средний",
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert "полосу пропускания" in llm.last_prompt

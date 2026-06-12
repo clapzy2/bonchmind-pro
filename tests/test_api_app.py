@@ -421,7 +421,8 @@ def test_endpoints_pass_callers_personal_workspace_id(authed_client, monkeypatch
     ``personal_workspace.id`` — never a value from the URL or request body.
 
     Spying on each service stub catches a future regression where someone
-    accidentally hard-codes ``config.DEFAULT_WORKSPACE_ID`` or accepts a
+    accidentally hard-codes a legacy sentinel value (the
+    ``DEFAULT_WORKSPACE_ID`` constant is gone in Stage 6e) or accepts a
     ``workspace_id`` from the request body.
     """
     expected = authed_client.get("/api/auth/me").json()["personal_workspace"]["id"]

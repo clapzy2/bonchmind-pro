@@ -103,7 +103,8 @@ class KnowledgeBase:
     def add_book(
         self,
         file_path,
-        workspace_id=config.DEFAULT_WORKSPACE_ID,
+        *,
+        workspace_id,
         document_id=None,
         original_name=None,
         progress_callback=None,
@@ -221,7 +222,7 @@ class KnowledgeBase:
         report(phase="done", progress=100, message=f"{filename} готов к поиску", current_file=filename)
         return f"✅ {filename}: добавлено {len(new_chunks)} фрагментов{section_info}"
 
-    def index_all_books(self, workspace_id=config.DEFAULT_WORKSPACE_ID, progress_callback=None):
+    def index_all_books(self, *, workspace_id, progress_callback=None):
         """Проиндексировать все файлы из docs/<workspace_id>/"""
         files = storage.iter_workspace_library_files(workspace_id)
         if not files:
@@ -252,7 +253,7 @@ class KnowledgeBase:
         report(phase="done", progress=100, message="Библиотека полностью переиндексирована")
         return "\n".join(results)
 
-    def clear(self, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def clear(self, *, workspace_id):
         """Удалить все чанки указанного workspace из коллекции.
 
         Раньше эта операция удаляла и пересоздавала всю коллекцию ChromaDB —
@@ -295,7 +296,7 @@ class KnowledgeBase:
         gc.collect()
         return f"🗑️ document_id={document_id}: удалено {len(ids)} фрагментов"
 
-    def remove_book(self, file_name, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def remove_book(self, file_name, *, workspace_id):
         """Удалить все чанки файла по ``source_file`` метаданным (legacy).
 
         Используется Gradio-потоком, где нет ``document_id``. Аутентифицированный
@@ -321,7 +322,7 @@ class KnowledgeBase:
         gc.collect()
         return f"🗑️ {target_name}: удалено {len(ids)} фрагментов"
 
-    def stats(self, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def stats(self, *, workspace_id):
         """Статистика: количество файлов, чанков, разделов в рамках workspace."""
         if self._col.count() == 0:
             return {"total_chunks": 0, "total_books": 0, "books": [], "sections": []}
@@ -361,7 +362,7 @@ class KnowledgeBase:
             return [query]
 
     # Поиск в ChromaDB
-    def _build_where_filter(self, workspace_id=config.DEFAULT_WORKSPACE_ID, file_filter="all", section_filter=None):
+    def _build_where_filter(self, *, workspace_id, file_filter="all", section_filter=None):
         """Строим фильтр для ChromaDB.
 
         ``workspace_id`` всегда добавляется в фильтр — это единственное
@@ -442,7 +443,7 @@ class KnowledgeBase:
             total += len(block)
         return "\n\n---\n\n".join(parts)
 
-    def get_sections_for_file(self, file_name, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def get_sections_for_file(self, file_name, *, workspace_id):
         """Получить список разделов конкретного файла."""
         if self._col.count() == 0:
             return []
@@ -462,7 +463,7 @@ class KnowledgeBase:
 
         return sorted(sections, key=self._section_sort_key)
 
-    def get_file_profile(self, file_name, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def get_file_profile(self, file_name, *, workspace_id):
         """Краткий профиль материала для продуктовой логики UI."""
         if self._col.count() == 0:
             return {
@@ -497,7 +498,7 @@ class KnowledgeBase:
         }
 
     # Распознавание раздела в запросе пользователя
-    def get_available_sections(self, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def get_available_sections(self, *, workspace_id):
         """Список всех разделов в рамках workspace"""
         if self._col.count() == 0:
             return []
@@ -513,12 +514,12 @@ class KnowledgeBase:
             key=self._section_sort_key,
         )
 
-    def find_section_in_query(self, query, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def find_section_in_query(self, query, *, workspace_id):
         """
         Ищет в запросе название раздела (с учётом падежей русского языка).
         Например: "из Речи Федра", находит раздел "Речь Федра: ..."
         """
-        sections = self.get_available_sections(workspace_id)
+        sections = self.get_available_sections(workspace_id=workspace_id)
         if not sections:
             return None
         query_lower = query.lower()
@@ -558,7 +559,7 @@ class KnowledgeBase:
 
         return None
 
-    def search_with_sources(self, query, file_filter="all", section_filter=None, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def search_with_sources(self, query, file_filter="all", section_filter=None, *, workspace_id):
         """
         Возвращает контекст для LLM и список источников,
         найденных RAG-пайплайном.
@@ -566,7 +567,7 @@ class KnowledgeBase:
         if self._col.count() == 0:
             return "", []
 
-        kw_filter = self._build_where_filter(workspace_id, file_filter, section_filter)
+        kw_filter = self._build_where_filter(workspace_id=workspace_id, file_filter=file_filter, section_filter=section_filter)
         queries = self._expand_query(query)
         cands = self._raw_search(queries, kw_filter)
 
@@ -871,12 +872,12 @@ class KnowledgeBase:
 
         return score
 
-    def _lexical_candidates_for_summary(self, query, file_filter="all", section_filter=None, limit=120, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def _lexical_candidates_for_summary(self, query, file_filter="all", section_filter=None, limit=120, *, workspace_id):
         """
         Дополнительный лексический поиск по всей базе/файлу.
         Нужен для больших учебников, когда semantic search цепляет оглавление и ранние главы.
         """
-        where = self._build_where_filter(workspace_id, file_filter, section_filter)
+        where = self._build_where_filter(workspace_id=workspace_id, file_filter=file_filter, section_filter=section_filter)
         data = self._col.get(
             where=where,
             include=["documents", "metadatas"]
@@ -902,7 +903,7 @@ class KnowledgeBase:
 
         return result
 
-    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def search_chunks_for_summary(self, query, file_filter="all", section_filter=None, top_k=None, *, workspace_id):
         """
         Поиск чанков для тематического конспекта.
 
@@ -918,7 +919,7 @@ class KnowledgeBase:
         if top_k is None:
             top_k = config.SUMMARY_TOP_K
 
-        kw_filter = self._build_where_filter(workspace_id, file_filter, section_filter)
+        kw_filter = self._build_where_filter(workspace_id=workspace_id, file_filter=file_filter, section_filter=section_filter)
 
         # 1. Semantic search
         queries = self._expand_query(query)
@@ -958,6 +959,39 @@ class KnowledgeBase:
 
             seen.add(h)
             combined.append((doc, meta, score))
+
+        # 3a. Defensive fallback. If semantic + lexical (after filtering) leave
+        # us empty but the workspace actually owns chunks matching kw_filter,
+        # surface those chunks directly. Mirrors search_with_sources so the
+        # summary path stops telling the user "topic not found" while chat
+        # finds the same material — Stage 6 smoke surfaced this for short
+        # plain-text uploads where _is_noise_summary_chunk's 250-char cutoff
+        # eats the entire file. The noise filter is a big-book quality
+        # heuristic, not a workspace-membership check, so it is intentionally
+        # not applied here. Year-range filter stays: it is about topic
+        # relevance, not chunk quality.
+        if not combined:
+            try:
+                fallback = self._col.get(
+                    where=kw_filter,
+                    include=["documents", "metadatas"],
+                )
+            except Exception:
+                fallback = {"documents": [], "metadatas": []}
+
+            for doc, meta in zip(
+                fallback.get("documents", []) or [],
+                fallback.get("metadatas", []) or [],
+            ):
+                if not doc:
+                    continue
+                if self._is_out_of_topic_year_range(doc, query):
+                    continue
+                h = self._md5(doc)
+                if h in seen:
+                    continue
+                seen.add(h)
+                combined.append((doc, meta, 0.0))
 
         if not combined:
             return []
@@ -1008,7 +1042,7 @@ class KnowledgeBase:
 
         return result
 
-    def search(self, query, file_filter="all", section_filter=None, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def search(self, query, file_filter="all", section_filter=None, *, workspace_id):
         """
         Старый интерфейс поиска: возвращает только контекст.
         Оставлен для совместимости.
@@ -1016,12 +1050,12 @@ class KnowledgeBase:
         context, _ = self.search_with_sources(query, file_filter, section_filter, workspace_id=workspace_id)
         return context
 
-    def get_file_chunks(self, file_filter="all", section_filter=None, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def get_file_chunks(self, file_filter="all", section_filter=None, *, workspace_id):
         """Получить чанки выбранного файла и, при необходимости, выбранного раздела."""
         if self._col.count() == 0:
             return []
 
-        where = self._build_where_filter(workspace_id, file_filter, section_filter)
+        where = self._build_where_filter(workspace_id=workspace_id, file_filter=file_filter, section_filter=section_filter)
         data = self._col.get(
             where=where,
             include=["documents", "metadatas"]
@@ -1040,7 +1074,7 @@ class KnowledgeBase:
         chunks.sort(key=lambda x: (x["source_file"], int(x["chunk_id"])))
         return chunks
 
-    def get_available_files(self, workspace_id=config.DEFAULT_WORKSPACE_ID):
+    def get_available_files(self, *, workspace_id):
         """Список файлов workspace (для выпадающего списка)"""
         if self._col.count() == 0:
             return []

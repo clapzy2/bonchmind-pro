@@ -13,6 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.knowledge_base import KnowledgeBase
 
 
+# Dev-only eval script: there is no auth context here, so we pick a single
+# workspace (overridable via ``--workspace-id``) and run the whole question
+# set against it. After Stage 6e KB methods require ``workspace_id``
+# explicitly — there is no implicit ``DEFAULT_WORKSPACE_ID`` fallback anymore.
+EVAL_WORKSPACE_ID = "dev-default"
+
+
 def load_questions(path: str):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -22,10 +29,27 @@ def normalize(text: str) -> str:
     return (text or "").lower().strip()
 
 
+def _parse_args(argv):
+    questions_path = None
+    workspace_id = EVAL_WORKSPACE_ID
+    leftovers = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--workspace-id" and i + 1 < len(argv):
+            workspace_id = argv[i + 1]
+            i += 2
+            continue
+        leftovers.append(arg)
+        i += 1
+    if leftovers:
+        questions_path = Path(leftovers[0])
+    return questions_path, workspace_id
+
+
 def main():
-    if len(sys.argv) > 1:
-        questions_path = Path(sys.argv[1])
-    else:
+    questions_path, workspace_id = _parse_args(sys.argv[1:])
+    if questions_path is None:
         questions_path = Path(__file__).parent / "questions_network_math.json"
     questions = load_questions(str(questions_path))
 
@@ -36,6 +60,7 @@ def main():
 
     print("=" * 60)
     print("BonchMind Pro Evaluation")
+    print(f"Workspace: {workspace_id}")
     print("=" * 60)
 
     for i, item in enumerate(questions, start=1):
@@ -43,11 +68,12 @@ def main():
         expected_file = item.get("expected_file", "")
         expected_section = item.get("expected_section", "")
 
-        section_filter = kb.find_section_in_query(question)
+        section_filter = kb.find_section_in_query(question, workspace_id=workspace_id)
         context = kb.search(
             question,
             file_filter="all",
             section_filter=section_filter,
+            workspace_id=workspace_id,
         )
 
         context_norm = normalize(context)

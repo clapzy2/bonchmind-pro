@@ -9,6 +9,11 @@ from src.summary_engine import (
     retrieve_chunks_by_plan,
 )
 
+# Stage 6e: KB/summary methods require ``workspace_id`` explicitly. These
+# tests don't care about cross-workspace isolation (FakeKB ignores it), so
+# a single test-wide constant keeps the call sites readable.
+TEST_WORKSPACE_ID = "ws-summary-test"
+
 
 class FakeLLM:
     def __init__(self, answer):
@@ -162,6 +167,7 @@ def test_planned_retrieval_scales_per_query_for_detailed_context():
         topic="wide topic",
         plan=plan,
         target_chunks=80,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert len(chunks) == 80
@@ -176,6 +182,7 @@ def test_planned_retrieval_keeps_default_limit_for_medium_context():
         kb=kb,
         topic="medium topic",
         plan=plan,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert len(chunks) == 40
@@ -229,6 +236,7 @@ def test_planned_retrieval_preserves_late_plan_periods_under_limit():
         topic=topic,
         plan=plan,
         target_chunks=40,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     texts = [chunk["text"] for chunk in chunks]
@@ -268,6 +276,7 @@ def test_planned_retrieval_uses_plain_plan_query_before_combined_query():
         topic=topic,
         plan=[topic, item],
         target_chunks=40,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     texts = [chunk["text"] for chunk in chunks]
@@ -309,6 +318,7 @@ def test_grouped_retrieval_keeps_chunks_for_each_plan_item():
         topic=topic,
         plan=[topic, early, late],
         target_chunks=40,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     chunks_by_item = {
@@ -339,6 +349,7 @@ def test_grouped_retrieval_uses_semantic_search_for_non_history_fast_modes():
         topic=topic,
         plan=[topic, item],
         target_chunks=8,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert groups[0]["chunks"]
@@ -352,6 +363,7 @@ def test_section_match_for_vov_avoids_northern_war():
         kb=kb,
         item="Великая Отечественная война и советский тыл",
         limit=2,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert chunks
@@ -366,6 +378,7 @@ def test_postwar_section_match_avoids_generic_foreign_policy():
         kb=kb,
         item="послевоенное восстановление, холодная война и внешняя политика СССР",
         limit=2,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert chunks
@@ -380,6 +393,7 @@ def test_nineties_section_match_prefers_russia_1990s_chapter():
         kb=kb,
         item="перестройка, распад СССР и Россия 1990-х годов",
         limit=3,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert chunks
@@ -396,6 +410,7 @@ def test_nep_section_match_prefers_nep_content_over_shifted_intro():
         kb=kb,
         item="создание СССР, НЭП и экономическая политика 1920-х годов",
         limit=2,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     texts = " ".join(chunk["text"] for chunk in chunks)
@@ -412,6 +427,7 @@ def test_section_match_filters_table_of_contents_chunks():
         kb=kb,
         item="создание СССР, НЭП и экономическая политика 1920-х годов",
         limit=2,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     texts = " ".join(chunk["text"] for chunk in chunks)
@@ -447,6 +463,7 @@ def test_short_grouped_retrieval_uses_sections_without_semantic_search():
             "Великая Отечественная война",
         ],
         target_chunks=8,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert kb.search_calls == 0
@@ -464,6 +481,7 @@ def test_medium_grouped_retrieval_skips_semantic_backup_for_composite_history_it
             "перестройка, распад СССР и Россия 1990-х годов",
         ],
         target_chunks=18,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert kb.search_calls == 0
@@ -481,6 +499,7 @@ def test_short_grouped_retrieval_skips_semantic_backup_for_composite_history_ite
             "перестройка, распад СССР и Россия 1990-х годов",
         ],
         target_chunks=8,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert kb.search_calls == 0
@@ -681,6 +700,7 @@ def test_grouped_retrieval_respects_short_target_chunk_limit():
         topic="wide topic",
         plan=["wide topic", "part 1", "part 2", "part 3"],
         target_chunks=18,
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     assert sum(len(group["chunks"]) for group in groups) <= 18
@@ -717,6 +737,7 @@ def test_medium_planned_prompt_does_not_use_original_topic_as_section():
         topic=topic,
         summary_type="Средний",
         file_filter="history.pdf",
+        workspace_id=TEST_WORKSPACE_ID,
     )
 
     plan_block = llm.last_prompt.split("НАЙДЕННЫЕ ФРАГМЕНТЫ ПО ПУНКТАМ:")[0]

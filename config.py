@@ -107,25 +107,6 @@ AUTH_COOKIE_NAME = "bonchmind_auth"
 # Set to True only when serving the frontend over HTTPS in production.
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
 
-# --- Multi-user foundation: legacy/dev workspace bridge --------------------
-#
-# As of Stage 4 the authenticated FastAPI flow resolves ``workspace_id``
-# from ``current_user.personal_workspace.id`` and threads it end-to-end
-# through chat, materials, *and* summary generation. This constant is
-# retained only as the bridge value for:
-#
-#   * ``main.py`` (the legacy Gradio UI), which has no auth and runs against
-#     a single shared workspace — the summary tab feeds it through a
-#     ``gr.State(DEFAULT_WORKSPACE_ID)`` input.
-#   * ``KnowledgeBase`` / ``summary_engine`` method defaults — kept so the
-#     remaining direct KB calls (tests, the Gradio path, ad-hoc scripts)
-#     keep working without having to pass an explicit workspace.
-#
-# Do NOT introduce new references to this constant from authenticated API
-# code: anything driven by a user request must take ``workspace_id`` as a
-# parameter sourced from the session cookie.
-DEFAULT_WORKSPACE_ID = "dev-default"
-
 
 def validate_config():
     """Проверяет базовые настройки проекта."""

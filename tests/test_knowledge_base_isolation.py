@@ -232,3 +232,97 @@ def test_clear_only_affects_its_own_workspace(tmp_path):
     assert kb.get_available_files(workspace_id="workspace-a") == []
     assert kb.get_available_files(workspace_id="workspace-b") == ["beta.txt"]
     assert kb.stats(workspace_id="workspace-b")["total_chunks"] > 0
+
+
+def test_search_chunks_for_summary_falls_back_to_workspace_chunks_when_pools_empty(tmp_path, monkeypatch):
+    """Regression guard for the Stage 6 smoke bug.
+
+    When semantic + lexical pools both come back empty (e.g. short English
+    queries like "Wi-Fi" against a Russian-language scorer, or
+    Chroma-version quirks where the keyword search yields nothing) the
+    summary path used to return ``[]``, leaving the user with "тема не
+    найдена" even though Assistant (which has its own fallback) found the
+    same material. ``search_chunks_for_summary`` now mirrors
+    ``search_with_sources`` and falls back to whatever chunks the
+    workspace + file_filter combination owns.
+    """
+    kb = make_kb(tmp_path)
+    text = (
+        "Wi-Fi - стандарт беспроводных локальных сетей.\n"
+        "Wi-Fi работает в полосе 2.4 GHz и 5 GHz.\n"
+    )
+    kb.add_book(
+        write_doc(tmp_path, "wifi.txt", text),
+        workspace_id="workspace-a",
+        document_id="doc-wifi",
+        original_name="wifi.txt",
+    )
+
+    # Force the regular semantic + lexical pipelines to return empty so
+    # the test exercises the fallback alone. This is the user's
+    # observed symptom, not a contrived state — semantic returning [] is
+    # how the live bug manifests.
+    monkeypatch.setattr(kb, "_raw_search", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        kb,
+        "_lexical_candidates_for_summary",
+        lambda *_a, **_kw: [],
+    )
+
+    chunks = kb.search_chunks_for_summary(
+        query="Wi-Fi",
+        file_filter="all",
+        section_filter=None,
+        top_k=18,
+        workspace_id="workspace-a",
+    )
+
+    assert chunks, "fallback must surface the workspace's chunks"
+    assert all(c["source_file"] == "wifi.txt" for c in chunks)
+
+
+def test_search_chunks_for_summary_fallback_stays_inside_caller_workspace(tmp_path, monkeypatch):
+    """Belt-and-braces: the fallback must never leak chunks from another
+    workspace. Stage 3+ isolation invariants apply to the fallback path
+    too."""
+    kb = make_kb(tmp_path)
+    kb.add_book(
+        write_doc(tmp_path, "alice.txt", "Документ Alice про Wi-Fi сети. " * 3),
+        workspace_id="workspace-a",
+        document_id="doc-alice",
+        original_name="alice.txt",
+    )
+    kb.add_book(
+        write_doc(tmp_path, "bob.txt", "Документ Bob про Bluetooth. " * 3),
+        workspace_id="workspace-b",
+        document_id="doc-bob",
+        original_name="bob.txt",
+    )
+
+    monkeypatch.setattr(kb, "_raw_search", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        kb,
+        "_lexical_candidates_for_summary",
+        lambda *_a, **_kw: [],
+    )
+
+    chunks_a = kb.search_chunks_for_summary(
+        query="anything",
+        file_filter="all",
+        section_filter=None,
+        top_k=18,
+        workspace_id="workspace-a",
+    )
+    chunks_b = kb.search_chunks_for_summary(
+        query="anything",
+        file_filter="all",
+        section_filter=None,
+        top_k=18,
+        workspace_id="workspace-b",
+    )
+
+    assert chunks_a and all(c["source_file"] == "alice.txt" for c in chunks_a)
+    assert chunks_b and all(c["source_file"] == "bob.txt" for c in chunks_b)
+    files_a = {c["source_file"] for c in chunks_a}
+    files_b = {c["source_file"] for c in chunks_b}
+    assert files_a.isdisjoint(files_b)

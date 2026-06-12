@@ -731,17 +731,22 @@ test on Stage 3 is signed off.
   with a tombstone row. Cheap to add later (one alembic + filter in
   `list_documents`); deferred until the product needs it.
 * ~~**Workspace-aware `summary_engine.py`** — Stage 4.~~ **Done in Stage 4.**
-  `generate_summary_service` now forwards `workspace_id` through
-  `main.on_generate_summary` into every `summary_engine` / KB call site, so
-  summary generation is scoped to the caller's workspace end-to-end. Gradio
-  keeps the legacy path via `gr.State(DEFAULT_WORKSPACE_ID)`.
-* **Per-workspace material job locks** — Stage 6 (per design plan). Today a
-  single global `_material_job_lock` serialises background uploads across
-  the whole instance; per-workspace progress *state* is already isolated.
-* **Drop `DEFAULT_WORKSPACE_ID`** — last call sites are `main.py` (Gradio,
-  via `gr.State`) and the `KnowledgeBase` / `summary_engine` method
-  defaults. When Gradio is retired (Stage 5 frontend takeover) the constant
-  can disappear entirely from `config.py`.
+  `generate_summary_service` forwards `workspace_id` end-to-end into every
+  `summary_engine` / KB call site, so summary generation is scoped to the
+  caller's workspace. After Stage 6d the route no longer detours through
+  `main.on_generate_summary` — `generate_summary_service` calls the
+  strategies directly.
+* **Per-workspace material job locks** — still open. Today a single global
+  `_material_job_lock` serialises background uploads across the whole
+  instance; per-workspace progress *state* is already isolated. Not
+  blocking for any current scenario; revisit when concurrency on shared
+  hosting becomes a real issue.
+* ~~**Drop `DEFAULT_WORKSPACE_ID`**~~ **Done in Stage 6e.** The constant
+  is removed from `config.py`; `KnowledgeBase` and `summary_engine`
+  declare `workspace_id` as a keyword-only argument with no default
+  (Python `TypeError` at any call site that forgets to pass it). The
+  legacy Gradio consumer (`gr.State(DEFAULT_WORKSPACE_ID)`) is gone with
+  the Gradio entrypoint itself (Stage 6d).
 * **Orphan chunk scrubber** — `document_service.delete_document` swallows
   ChromaDB errors during `remove_chunks` so a transient failure does not
   block the SQL delete. A maintenance task (Stage 6) should periodically
@@ -749,7 +754,7 @@ test on Stage 3 is signed off.
 
 ---
 
-## Stage 5 — frontend auth UI (in flight)
+## Stage 5 — frontend auth UI (done)
 
 The Next.js frontend grew its own auth surface on top of the Stage 1
 backend endpoints. No backend changes; this stage is entirely under
@@ -792,20 +797,76 @@ What landed:
 * Access tokens are intentionally **never** stored in JS. The whole UI
   relies on the HttpOnly `bonchmind_auth` cookie.
 
-Out of scope for Stage 5, tracked here:
+Out of scope for Stage 5 (since closed in Stage 6 or still open):
 
-* **Drop Gradio (`main.py`) + `DEFAULT_WORKSPACE_ID`** — parity-check
-  the Next.js UI against the Gradio screens first; once the new UI
-  covers the practical workflows, remove the Gradio entrypoint and the
-  remaining method defaults that read `config.DEFAULT_WORKSPACE_ID`.
-  Standalone sub-step at the end of Stage 5 or its own Stage 6 ticket.
-* **Frontend test framework** (vitest / playwright) — gating today is
-  `npm run typecheck` + `npm run lint` + backend `pytest` + manual
-  smoke. Adding component / e2e tests for the auth flow is a separate
-  ticket.
-* **Refresh token rotation / explicit session-expiry UX** — the JWT
-  lives 7 days; on 401 the UI redirects to `/login`. Anything more
-  proactive (toast "сессия истекает через 5 минут", silent refresh)
-  comes later.
+* ~~**Drop Gradio (`main.py`) + `DEFAULT_WORKSPACE_ID`**~~ **Done in
+  Stage 6** (`6c–6e`). See `design/stage-6-parity.md` for the parity
+  matrix that gated the removal and the §3 "known-gaps" follow-ups
+  the user accepted.
+* **Frontend test framework** (vitest / playwright) — still open.
+  Gating today is `npm run typecheck` + `npm run lint` + backend
+  `pytest` + manual smoke. Component / e2e tests for the auth flow are
+  a separate ticket.
+* **Refresh token rotation / explicit session-expiry UX** — still
+  open. JWT lives 7 days; on 401 the UI redirects to `/login`. Anything
+  more proactive (toast "сессия истекает через 5 минут", silent
+  refresh) comes later.
 * **Password reset / email verification / multi-workspace switching /
-  admin diagnostics UI** — not in Stage 5's stated goals.
+  admin diagnostics UI** — still open. Not in Stage 5's stated goals.
+
+---
+
+## Stage 6 — drop Gradio + `DEFAULT_WORKSPACE_ID` (done)
+
+Closed the last Stage 3 backlog item ("Drop `DEFAULT_WORKSPACE_ID`")
+together with the Gradio entrypoint that was the only thing keeping it
+alive. Backend auth / workspace / Document / summary flow from Stages
+3/4 untouched; the change is concentrated in `config.py`,
+`src/knowledge_base.py`, `src/summary_engine.py`, plus tests / dev
+scripts that called KB without an explicit workspace.
+
+What landed:
+
+* **Stage 6a** — `design/stage-6-parity.md` parity matrix Gradio ↔
+  Next.js. Verdict: every production scenario covered; a handful of
+  Gradio-only behaviours either already provided by the shell (stats),
+  better in the new UI (per-workspace reindex), intentionally dropped
+  (Clear KB hatchet), or recorded as low-priority follow-ups
+  (multi-file upload, JSON trace export, real Settings content). A
+  separate decisive argument for retirement: Gradio bypassed the Stage
+  3+ auth path entirely (`on_add_book` wrote through
+  `kb.add_book(...)` straight into `DEFAULT_WORKSPACE_ID` without
+  touching the `Document` table).
+* **Stage 6c** — deprecation warning + banner on `python main.py`
+  start-up; READMEs updated to call the entrypoint legacy. No code
+  removal yet.
+* **Stage 6d** — `main.py`, `run.py`, `gradio>=4.0.0` and the legacy
+  bridge in `app_services.generate_summary_service` deleted. The
+  no-topic / no-section fallback that used to live inside
+  `main.on_generate_summary` moved into `summary_engine.py` as
+  `generate_full_file_summary`. `app_services` no longer imports
+  `main`. CI failure on the same day surfaced a transitive-only
+  dependency — `python-multipart` (needed by FastAPI's
+  `UploadFile`) used to ship via Gradio's tree; pinned explicitly in
+  `requirements.txt` as a 6d follow-up.
+* **Stage 6e** — `config.DEFAULT_WORKSPACE_ID` deleted. Every public
+  KB method (16) and `summary_engine` strategy / helper (8) now
+  declares `workspace_id` as a keyword-only argument with no default
+  via the `*,` separator — forgetting it is a Python `TypeError` at
+  the call site. Five internal positional callers in
+  `knowledge_base.py` updated to keyword form. `ingest.py` (dead;
+  printed "Запусти main.py") deleted; `eval/run_eval.py` gained an
+  `EVAL_WORKSPACE_ID` module constant + `--workspace-id` CLI flag.
+
+Known-gaps still open (from §3 of `design/stage-6-parity.md`),
+recorded for future follow-ups:
+
+* multi-file upload in `MaterialsWorkspace`;
+* diagnostics trace JSON export button on `QualityWorkspace`;
+* real Settings tab content (waits for user-facing toggles to exist);
+* superuser diagnostics UI (`/api/diagnostics/*` stays raw-HTTP);
+* light theme toggle.
+
+`tests/test_two_users_isolation.py` still verifies the workspace
+isolation invariants end-to-end (185 backend tests passing as of
+Stage 6e).

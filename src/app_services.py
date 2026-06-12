@@ -90,6 +90,30 @@ def _normalize_selected_file(selected_file):
     return "Все файлы" if value in ALL_FILES_LABELS else value
 
 
+def _format_no_information_message(selected_file):
+    """User-facing fallback when chat retrieval returned nothing.
+
+    Moved out of the deleted ``main.py`` (Stage 6d) into the service layer
+    so chat_service no longer references the Gradio entrypoint module.
+    """
+    if selected_file and selected_file != "Все файлы":
+        return (
+            "Информация по данному вопросу не найдена в выбранном материале.\n\n"
+            "Попробуйте:\n"
+            "• выбрать другой файл;\n"
+            "• выбрать «Все файлы»;\n"
+            "• переформулировать вопрос."
+        )
+
+    return (
+        "Информация по данному вопросу не найдена в загруженных материалах.\n\n"
+        "Попробуйте:\n"
+        "• загрузить дополнительные материалы;\n"
+        "• выбрать другой файл;\n"
+        "• переформулировать вопрос."
+    )
+
+
 def _build_answer_summary(answer):
     text = " ".join(str(answer or "").split())
     if not text:
@@ -918,7 +942,7 @@ def chat_service(workspace_id: str, request: ChatRequest):
     answer = llm.call(full_prompt)
 
     if is_refusal(answer):
-        answer = main.format_no_information_message(selected_file)
+        answer = _format_no_information_message(selected_file)
 
     updated_history = history + [
         ChatMessage(role="user", content=message),

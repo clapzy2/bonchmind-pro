@@ -960,6 +960,39 @@ class KnowledgeBase:
             seen.add(h)
             combined.append((doc, meta, score))
 
+        # 3a. Defensive fallback. If semantic + lexical (after filtering) leave
+        # us empty but the workspace actually owns chunks matching kw_filter,
+        # surface those chunks directly. Mirrors search_with_sources so the
+        # summary path stops telling the user "topic not found" while chat
+        # finds the same material — Stage 6 smoke surfaced this for short
+        # plain-text uploads where _is_noise_summary_chunk's 250-char cutoff
+        # eats the entire file. The noise filter is a big-book quality
+        # heuristic, not a workspace-membership check, so it is intentionally
+        # not applied here. Year-range filter stays: it is about topic
+        # relevance, not chunk quality.
+        if not combined:
+            try:
+                fallback = self._col.get(
+                    where=kw_filter,
+                    include=["documents", "metadatas"],
+                )
+            except Exception:
+                fallback = {"documents": [], "metadatas": []}
+
+            for doc, meta in zip(
+                fallback.get("documents", []) or [],
+                fallback.get("metadatas", []) or [],
+            ):
+                if not doc:
+                    continue
+                if self._is_out_of_topic_year_range(doc, query):
+                    continue
+                h = self._md5(doc)
+                if h in seen:
+                    continue
+                seen.add(h)
+                combined.append((doc, meta, 0.0))
+
         if not combined:
             return []
 

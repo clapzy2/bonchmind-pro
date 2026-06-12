@@ -1,7 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookCopy,
   LibraryBig,
@@ -12,40 +11,15 @@ import {
   Upload,
 } from "lucide-react";
 
-import {
-  deleteMaterial,
-  getMaterialProgress,
-  reindexLibrary,
-  reindexMaterial,
-  uploadMaterial,
-  type MaterialInfo,
-  type MaterialProgressResponse,
-  type SystemStatus,
-} from "@/lib/api";
-import { handleAuthError } from "@/lib/handle-auth-error";
+import type { MaterialInfo } from "@/lib/api";
+import { useMaterialOperations } from "@/lib/use-material-operations";
 
 type MaterialsWorkspaceProps = {
   materials: MaterialInfo[];
-  status: SystemStatus;
   onLibraryChange?: () => Promise<void> | void;
 };
 
-type Notice = {
-  tone: "info" | "warning" | "success";
-  text: string;
-};
-
 const PREFERENCES_KEY = "bonchmind-materials-preferences";
-
-const idleProgress: MaterialProgressResponse = {
-  active: false,
-  operation: "idle",
-  phase: "",
-  message: "",
-  progress: 0,
-  current_file: "",
-  error: "",
-};
 
 function getMaterialBadge(label: string) {
   if (label === "ready" || label === "plain_text") {
@@ -62,22 +36,16 @@ function getMaterialBadge(label: string) {
 }
 
 export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWorkspaceProps) {
-  const router = useRouter();
   const [query, setQuery] = useState("");
   const [selectedMaterial, setSelectedMaterial] = useState(materials[0]?.name ?? "");
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isReindexingMaterial, setIsReindexingMaterial] = useState(false);
-  const [isReindexingLibrary, setIsReindexingLibrary] = useState(false);
-  const [progressState, setProgressState] = useState<MaterialProgressResponse>(idleProgress);
-  const [hasPendingSync, setHasPendingSync] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const isAnyOperationRunning = isUploading || isDeleting || isReindexingMaterial || isReindexingLibrary;
 
-  const syncLibraryState = useCallback(async () => {
-    await onLibraryChange?.();
-  }, [onLibraryChange]);
+  const operations = useMaterialOperations({
+    onSync: async () => {
+      await onLibraryChange?.();
+    },
+  });
+  const { progress, notice, isRunning, activeOperation } = operations;
 
   const filteredMaterials = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -143,137 +111,25 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
     }
   }
 
-  useEffect(() => {
-    const shouldPoll = isAnyOperationRunning;
-    if (!shouldPoll) {
-      return;
-    }
-
-    let isCancelled = false;
-
-    async function pullProgress() {
-      const response = await getMaterialProgress();
-      if (!isCancelled) {
-        setProgressState(response);
-      }
-    }
-
-    pullProgress().catch(() => undefined);
-    const timer = window.setInterval(() => {
-      pullProgress().catch(() => undefined);
-    }, 500);
-
-    return () => {
-      isCancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [isAnyOperationRunning]);
-
-  useEffect(() => {
-    if (!isAnyOperationRunning || progressState.active) {
-      return;
-    }
-
-    async function finalize() {
-      if (hasPendingSync) {
-        await syncLibraryState();
-      }
-
-      setNotice({
-        tone: progressState.phase === "error" ? "warning" : "success",
-        text:
-          progressState.message ||
-          (progressState.phase === "error"
-            ? "Операция с библиотекой завершилась с ошибкой."
-            : "Операция с библиотекой завершена."),
-      });
-
-      setIsUploading(false);
-      setIsDeleting(false);
-      setIsReindexingMaterial(false);
-      setIsReindexingLibrary(false);
-      setHasPendingSync(false);
-    }
-
-    finalize().catch(() => {
-      setIsUploading(false);
-      setIsDeleting(false);
-      setIsReindexingMaterial(false);
-      setIsReindexingLibrary(false);
-      setHasPendingSync(false);
-    });
-  }, [hasPendingSync, isAnyOperationRunning, progressState, syncLibraryState]);
-
-  async function handleUploadChange(event: ChangeEvent<HTMLInputElement>) {
+  function handleUploadChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (!file || isUploading) {
+    // Reset the input first so re-selecting the same file still fires change.
+    event.target.value = "";
+    if (!file || isRunning) {
       return;
     }
-
-    setIsUploading(true);
-    setHasPendingSync(true);
-    setProgressState({
-      active: true,
-      operation: "upload",
-      phase: "queued",
-      message: `Ставлю в очередь загрузку ${file.name}`,
-      progress: 0,
-      current_file: file.name,
-      error: "",
-    });
-    setNotice({
-      tone: "info",
-      text: `Загружаю и индексирую ${file.name}. После этого материал сразу появится в библиотеке.`,
-    });
-
-    try {
-      const response = await uploadMaterial(file);
-      if (!response.ok) {
-        setNotice({
-          tone: "warning",
-          text: response.message,
-        });
-        setIsUploading(false);
-        setHasPendingSync(false);
-      } else {
-        setSelectedMaterial(file.name);
-        setNotice({
-          tone: "info",
-          text: response.message,
-        });
-        setProgressState(await getMaterialProgress());
-        // Intentionally do NOT clear isUploading here — uploadMaterial returns
-        // as soon as the backend kicks off the background indexing job; the
-        // polling effect needs isUploading=true to keep calling
-        // /api/materials/progress until the job flips active=false. The
-        // finalize effect then resets isUploading and refreshes the library.
-      }
-    } catch (err) {
-      if (handleAuthError(err, router)) return;
-      setNotice({
-        tone: "warning",
-        text: "Не удалось загрузить материал. Проверьте backend и повторите попытку.",
-      });
-      setProgressState({
-        active: false,
-        operation: "idle",
-        phase: "error",
-        message: "Загрузка завершилась с ошибкой",
-        progress: 100,
-        current_file: file.name,
-        error: "upload_failed",
-      });
-      setIsUploading(false);
-      setHasPendingSync(false);
-    } finally {
-      // Reset the file input only — keep isUploading until the background
-      // indexing job actually finishes (see comment above).
-      event.target.value = "";
-    }
+    void operations.uploadFile(file, (materialName) => setSelectedMaterial(materialName));
   }
 
-  async function handleDeleteSelected(materialName: string = selectedMaterial) {
-    if (!materialName || isDeleting) {
+  function handleReindexSelected(materialName: string) {
+    if (!materialName || isRunning) {
+      return;
+    }
+    void operations.reindexFile(materialName);
+  }
+
+  function handleDeleteSelected(materialName: string) {
+    if (!materialName || isRunning) {
       return;
     }
 
@@ -284,173 +140,15 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
       return;
     }
 
-    setIsDeleting(true);
-    setHasPendingSync(true);
-    setProgressState({
-      active: true,
-      operation: "delete",
-      phase: "queued",
-      message: `Ставлю в очередь удаление ${materialName}`,
-      progress: 0,
-      current_file: materialName,
-      error: "",
-    });
-    setNotice({
-      tone: "info",
-      text: `Удаляю ${materialName} из библиотеки и векторной базы.`,
-    });
-
-    try {
-      const response = await deleteMaterial(materialName);
-      if (!response.ok) {
-        setNotice({
-          tone: "warning",
-          text: response.message,
-        });
-        setIsDeleting(false);
-        setHasPendingSync(false);
-      } else {
-        setNotice({
-          tone: "info",
-          text: response.message,
-        });
-        setProgressState(await getMaterialProgress());
-      }
-    } catch (err) {
-      if (handleAuthError(err, router)) return;
-      setNotice({
-        tone: "warning",
-        text: "Не удалось удалить материал. Попробуйте еще раз после проверки backend.",
-      });
-      setProgressState({
-        active: false,
-        operation: "idle",
-        phase: "error",
-        message: "Удаление завершилось с ошибкой",
-        progress: 100,
-        current_file: materialName,
-        error: "delete_failed",
-      });
-    }
-  }
-
-  async function handleReindexSelected(materialName: string = selectedMaterial) {
-    if (!materialName || isReindexingMaterial) {
-      return;
-    }
-
-    setIsReindexingMaterial(true);
-    setHasPendingSync(true);
-    setProgressState({
-      active: true,
-      operation: "reindex_material",
-      phase: "queued",
-      message: `Ставлю в очередь переиндексацию ${materialName}`,
-      progress: 0,
-      current_file: materialName,
-      error: "",
-    });
-    setNotice({
-      tone: "info",
-      text: `Переиндексирую ${materialName}. Это полезно после замены файла или очистки структуры.`,
-    });
-
-    try {
-      const response = await reindexMaterial(materialName);
-      if (!response.ok) {
-        setNotice({
-          tone: "warning",
-          text: response.message,
-        });
-        setIsReindexingMaterial(false);
-        setHasPendingSync(false);
-      } else {
-        setNotice({
-          tone: "info",
-          text: response.message,
-        });
-        setProgressState(await getMaterialProgress());
-      }
-    } catch (err) {
-      if (handleAuthError(err, router)) return;
-      setNotice({
-        tone: "warning",
-        text: "Не удалось переиндексировать материал.",
-      });
-      setProgressState({
-        active: false,
-        operation: "idle",
-        phase: "error",
-        message: "Переиндексация завершилась с ошибкой",
-        progress: 100,
-        current_file: materialName,
-        error: "reindex_material_failed",
-      });
-    }
-  }
-
-  async function handleReindexLibrary() {
-    if (isReindexingLibrary) {
-      return;
-    }
-
-    setIsReindexingLibrary(true);
-    setHasPendingSync(true);
-    setProgressState({
-      active: true,
-      operation: "reindex_library",
-      phase: "queued",
-      message: "Ставлю в очередь полную пересборку библиотеки",
-      progress: 0,
-      current_file: "",
-      error: "",
-    });
-    setNotice({
-      tone: "info",
-      text: "Полностью пересобираю библиотеку из папки docs. Это может занять немного времени.",
-    });
-
-    try {
-      const response = await reindexLibrary();
-      if (!response.ok) {
-        setNotice({
-          tone: "warning",
-          text: response.message,
-        });
-        setIsReindexingLibrary(false);
-        setHasPendingSync(false);
-      } else {
-        setNotice({
-          tone: "info",
-          text: response.message,
-        });
-        setProgressState(await getMaterialProgress());
-      }
-    } catch (err) {
-      if (handleAuthError(err, router)) return;
-      setNotice({
-        tone: "warning",
-        text: "Не удалось переиндексировать библиотеку целиком.",
-      });
-      setProgressState({
-        active: false,
-        operation: "idle",
-        phase: "error",
-        message: "Пересборка библиотеки завершилась с ошибкой",
-        progress: 100,
-        current_file: "",
-        error: "reindex_library_failed",
-      });
-    }
+    void operations.deleteFile(materialName);
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-6">
       <section className="bm-surface shrink-0 rounded-xl p-6 shadow-soft">
         <div className="max-w-4xl">
-          <p className="text-sm font-semibold text-brand">Библиотека</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight text-white">Материалы и структура базы</h1>
-          <p className="mt-3 text-base leading-7 text-muted">
+          <h1 className="text-2xl font-bold tracking-tight text-white">Библиотека</h1>
+          <p className="mt-2 text-sm leading-6 text-muted">
             Добавляйте файлы, чистите библиотеку и сразу видите, насколько материал готов к работе.
           </p>
         </div>
@@ -466,48 +164,48 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isAnyOperationRunning}
+            disabled={isRunning}
             className="bm-button-primary h-11 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {activeOperation === "upload" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Добавить материал
           </button>
           <button
             type="button"
-            onClick={handleReindexLibrary}
-            disabled={isAnyOperationRunning}
+            onClick={() => operations.reindexAll()}
+            disabled={isRunning}
             className="bm-button-secondary h-11 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {isReindexingLibrary ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+            {activeOperation === "reindex_library" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
             Пересобрать библиотеку
           </button>
         </div>
 
-        {(progressState.active || progressState.phase === "done" || progressState.phase === "error") ? (
+        {(progress.active || progress.phase === "done" || progress.phase === "error") ? (
           <div className="mt-5 rounded-xl border border-white/10 bg-[#0f1319] p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-sm font-semibold text-white">
-                  {progressState.active ? "Индексация в процессе" : progressState.phase === "error" ? "Операция завершилась с ошибкой" : "Последняя операция завершена"}
+                  {progress.active ? "Индексация в процессе" : progress.phase === "error" ? "Операция завершилась с ошибкой" : "Последняя операция завершена"}
                 </div>
                 <div className="mt-1 text-sm text-muted">
-                  {progressState.message || "BonchMind готовит библиотеку."}
+                  {progress.message || "BonchMind готовит библиотеку."}
                 </div>
               </div>
-              <div className="text-lg font-bold text-white">{progressState.progress}%</div>
+              <div className="text-lg font-bold text-white">{progress.progress}%</div>
             </div>
             <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/8">
               <div
                 className={`h-full rounded-full transition-all duration-300 ${
-                  progressState.phase === "error" ? "bg-amber-400" : "bg-[var(--accent)]"
+                  progress.phase === "error" ? "bg-amber-400" : "bg-[var(--accent)]"
                 }`}
-                style={{ width: `${Math.max(4, progressState.progress)}%` }}
+                style={{ width: `${Math.max(4, progress.progress)}%` }}
               />
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.16em] text-white/45">
-              <span>Этап: {progressState.phase || "starting"}</span>
-              {progressState.current_file ? <span>Файл: {progressState.current_file}</span> : null}
-              <span>{progressState.active ? "live" : progressState.phase === "error" ? "error" : "done"}</span>
+              <span>Этап: {progress.phase || "starting"}</span>
+              {progress.current_file ? <span>Файл: {progress.current_file}</span> : null}
+              <span>{progress.active ? "live" : progress.phase === "error" ? "error" : "done"}</span>
             </div>
           </div>
         ) : null}
@@ -580,7 +278,10 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
               filteredMaterials.map((material) => {
                 const isActive = material.name === selectedMaterial;
                 const badge = getMaterialBadge(material.quality_label);
-                const isMaterialBusy = isActive && (isReindexingMaterial || isDeleting);
+                const isCardReindexing =
+                  activeOperation === "reindex_material" && progress.current_file === material.name;
+                const isCardDeleting =
+                  activeOperation === "delete" && progress.current_file === material.name;
 
                 return (
                   <div
@@ -610,12 +311,12 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
                         onClick={(event) => {
                           event.stopPropagation();
                           setSelectedMaterial(material.name);
-                          void handleReindexSelected(material.name);
+                          handleReindexSelected(material.name);
                         }}
-                        disabled={isAnyOperationRunning}
+                        disabled={isRunning}
                         className="bm-button-secondary h-9 px-3 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {isMaterialBusy && isReindexingMaterial ? (
+                        {isCardReindexing ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
                         ) : (
                           <RefreshCcw className="h-3.5 w-3.5" />
@@ -627,12 +328,12 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
                         onClick={(event) => {
                           event.stopPropagation();
                           setSelectedMaterial(material.name);
-                          void handleDeleteSelected(material.name);
+                          handleDeleteSelected(material.name);
                         }}
-                        disabled={isAnyOperationRunning}
+                        disabled={isRunning}
                         className="bm-button-danger h-9 px-3 text-xs font-medium text-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {isMaterialBusy && isDeleting ? (
+                        {isCardDeleting ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
                         ) : (
                           <Trash2 className="h-3.5 w-3.5" />

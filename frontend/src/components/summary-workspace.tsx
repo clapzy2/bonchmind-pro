@@ -1,17 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, Loader2, Play, Search } from "lucide-react";
+import { Download, Loader2, Paperclip, Play, Search } from "lucide-react";
 
 import type { MaterialInfo, SummaryResponse, TraceChunkGroup } from "@/lib/api";
 import { exportSummaryDocx, generateSummary } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { UploadInline } from "@/components/upload-inline";
+import { useMaterialOperations } from "@/lib/use-material-operations";
+
+const UPLOAD_ACCEPT = ".pdf,.txt,.epub,.docx,.md,.fb2,.zip,.html,.htm";
 
 type SummaryWorkspaceProps = {
   materials: MaterialInfo[];
   onResult?: (result: SummaryResponse) => void;
+  onLibraryChange?: () => Promise<void> | void;
 };
 
 const summaryTypes = ["Краткий", "Средний", "Подробный"];
@@ -26,7 +31,7 @@ function isChunkGroupArray(value: unknown): value is TraceChunkGroup[] {
   return Array.isArray(value) && value.length > 0 && typeof value[0] === "object" && value[0] !== null && "chunks" in value[0];
 }
 
-export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps) {
+export function SummaryWorkspace({ materials, onResult, onLibraryChange }: SummaryWorkspaceProps) {
   const router = useRouter();
   const materialOptions = useMemo(() => ["Все материалы", ...materials.map((material) => material.name)], [materials]);
 
@@ -39,6 +44,23 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const upload = useMaterialOperations({
+    onSync: async () => {
+      await onLibraryChange?.();
+    },
+  });
+
+  function handleUploadChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || upload.isRunning) {
+      return;
+    }
+    // Auto-select the freshly uploaded file so the next summary targets it.
+    void upload.uploadFile(file, (materialName) => setSelectedFile(materialName));
+  }
 
   useEffect(() => {
     const raw = window.localStorage.getItem(PREFERENCES_KEY);
@@ -222,6 +244,13 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
         </label>
 
         <div className="mt-6 flex flex-wrap items-center gap-4">
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept={UPLOAD_ACCEPT}
+            onChange={handleUploadChange}
+          />
           <button
             className="bm-button-primary h-12 px-6 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
@@ -232,6 +261,20 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
             {isLoading ? "Генерирую..." : "Сгенерировать"}
           </button>
           <button
+            className="bm-button-secondary flex h-12 w-12 items-center justify-center disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            disabled={upload.isRunning}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Загрузить материал"
+            title="Загрузить материал"
+          >
+            {upload.activeOperation === "upload" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Paperclip className="h-4 w-4" />
+            )}
+          </button>
+          <button
             className="bm-button-secondary h-12 px-6 text-sm font-bold text-white disabled:cursor-not-allowed disabled:text-white/55"
             type="button"
             disabled={!plannedGroups.length}
@@ -240,8 +283,10 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
             <Search className="h-4 w-4" />
             {showSources ? "Скрыть источники" : "Проверить источники"}
           </button>
-          <p className="text-sm text-muted">Первый запуск может быть дольше обычного.</p>
+          <p className="text-sm text-muted">Скрепка — загрузить материал, не уходя с экрана.</p>
         </div>
+
+        <UploadInline progress={upload.progress} notice={upload.notice} />
 
         {exportError ? (
           <div className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">

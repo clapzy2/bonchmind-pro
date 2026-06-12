@@ -1,16 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, Loader2, MessageSquareQuote, Send, Sparkles } from "lucide-react";
+import { Bot, Loader2, MessageSquareQuote, Paperclip, Send, Sparkles } from "lucide-react";
 
 import type { ChatMessage, ChatResponse, MaterialInfo } from "@/lib/api";
 import { sendChatMessage } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { UploadInline } from "@/components/upload-inline";
+import { useMaterialOperations } from "@/lib/use-material-operations";
+
+const UPLOAD_ACCEPT = ".pdf,.txt,.epub,.docx,.md,.fb2,.zip,.html,.htm";
 
 type AssistantWorkspaceProps = {
   materials: MaterialInfo[];
+  onLibraryChange?: () => Promise<void> | void;
 };
 
 const answerModes = ["Обычный", "Кратко", "Только цитаты"];
@@ -26,7 +31,7 @@ type Notice = {
   text: string;
 };
 
-export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
+export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWorkspaceProps) {
   const router = useRouter();
   const materialOptions = useMemo(() => ["Все материалы", ...materials.map((material) => material.name)], [materials]);
 
@@ -38,6 +43,23 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const historyViewportRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const upload = useMaterialOperations({
+    onSync: async () => {
+      await onLibraryChange?.();
+    },
+  });
+
+  function handleUploadChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || upload.isRunning) {
+      return;
+    }
+    // Auto-select the freshly uploaded file so the next question targets it.
+    void upload.uploadFile(file, (materialName) => setSelectedFile(materialName));
+  }
 
   useEffect(() => {
     const raw = window.localStorage.getItem(ASSISTANT_PREFERENCES_KEY);
@@ -239,6 +261,27 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
             </label>
 
             <div className="mt-4 flex flex-wrap items-center gap-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept={UPLOAD_ACCEPT}
+                onChange={handleUploadChange}
+              />
+              <button
+                className="bm-button-secondary flex h-12 w-12 items-center justify-center disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={upload.isRunning}
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Загрузить материал"
+                title="Загрузить материал"
+              >
+                {upload.activeOperation === "upload" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Paperclip className="h-4 w-4" />
+                )}
+              </button>
               <button
                 className="bm-button-primary h-12 px-6 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 type="button"
@@ -249,9 +292,11 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
                 {isLoading ? "Отвечаю..." : "Отправить"}
               </button>
               <p className="text-sm text-muted">
-                Короткие уточнения вроде “подробнее” продолжают предыдущий контекст.
+                Скрепка — чтобы загрузить новый материал прямо отсюда.
               </p>
             </div>
+
+            <UploadInline progress={upload.progress} notice={upload.notice} />
 
             {notice ? (
               <div

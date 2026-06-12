@@ -11,7 +11,7 @@ type SidebarProps = {
 const navItems = [
   { key: "assistant", label: "Ассистент", icon: MessageSquareText },
   { key: "summary", label: "Конспект", icon: FileText },
-  { key: "materials", label: "Материалы", icon: BookOpen },
+  { key: "materials", label: "Библиотека", icon: BookOpen },
 ];
 
 function getMaterialBadge(label: string) {

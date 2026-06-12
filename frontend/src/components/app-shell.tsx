@@ -99,11 +99,15 @@ export function AppShell({ health, materials, status }: AppShellProps) {
         <Topbar activeSection={activeSection} health={health} />
         <div className="workspace">
           {activeSection === "summary" ? (
-            <SummaryWorkspace materials={materialsState} onResult={setLastRun} />
+            <SummaryWorkspace
+              materials={materialsState}
+              onResult={setLastRun}
+              onLibraryChange={refreshLibraryState}
+            />
           ) : activeSection === "assistant" ? (
-            <AssistantWorkspace materials={materialsState} />
+            <AssistantWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
           ) : activeSection === "materials" ? (
-            <MaterialsWorkspace materials={materialsState} status={statusState} onLibraryChange={refreshLibraryState} />
+            <MaterialsWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
           ) : activeSection === "quality" ? (
             <QualityWorkspace lastRun={lastRun} />
           ) : (

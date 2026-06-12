@@ -1,6 +1,23 @@
 """
-main.py - запускает веб-интерфейс.
-Пользователь может загружать файлы и задавать вопросы по текстам.
+main.py — legacy Gradio entrypoint (DEPRECATED).
+
+Starting with Stage 6 the primary UI is the Next.js frontend in
+``frontend/`` (see ``frontend/README.md``). The Gradio shell here is
+kept for one release cycle as a fallback for ad-hoc local use and will
+be deleted in sub-step 6d of the same stage.
+
+Reasons it must go:
+
+* it bypasses the Stage 3+ auth system (``on_add_book`` writes through
+  ``kb.add_book`` straight into ``config.DEFAULT_WORKSPACE_ID`` without
+  touching the ``Document`` table, so the workspace-isolation
+  invariants verified by ``tests/test_two_users_isolation.py`` simply
+  do not hold for anything done through this UI);
+* it is the only remaining consumer of ``config.DEFAULT_WORKSPACE_ID``
+  in the authenticated codepaths (Stage 3 backlog item).
+
+Use ``python run_api.py`` + ``npm run dev`` (from ``frontend/``)
+instead. See ``README.md`` for the full local-dev recipe.
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -849,7 +866,33 @@ def build_gui():
 
 # Запуск приложения
 
+_DEPRECATION_MESSAGE = (
+    "\n"
+    "============================================================\n"
+    " ⚠  DEPRECATION: the Gradio UI (`python main.py`) is legacy.\n"
+    "    The supported UI is the Next.js frontend (Stage 5+):\n"
+    "        python run_api.py            # FastAPI backend\n"
+    "        cd frontend && npm run dev   # Next.js UI\n"
+    "    This entrypoint will be removed in Stage 6d.\n"
+    "    Reason: this UI bypasses the auth system and writes\n"
+    "    everything to ``DEFAULT_WORKSPACE_ID`` without going\n"
+    "    through the ``Document`` table.\n"
+    "============================================================\n"
+)
+
+
 if __name__ == "__main__":
+    # User-facing one-time deprecation banner. ``DeprecationWarning`` itself
+    # is hidden by ``warnings.filterwarnings("ignore")`` at the top of the
+    # module (kept for Gradio / torch noise), so we deliberately print the
+    # banner instead of relying on the warnings machinery.
+    print(_DEPRECATION_MESSAGE)
+    warnings.warn(
+        "main.py (Gradio UI) is deprecated; use the Next.js frontend instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     config_errors = config.validate_config()
     if config_errors:
         print("Ошибки конфигурации:")

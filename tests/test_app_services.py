@@ -629,7 +629,9 @@ def test_generate_summary_service_forwards_workspace_id(monkeypatch):
 
     Regression guard for Stage 4: previously the service-layer accepted the
     argument but dropped it via ``del workspace_id``, which made the summary
-    silently read from ``config.DEFAULT_WORKSPACE_ID``.
+    silently fall back on the legacy ``DEFAULT_WORKSPACE_ID`` ("dev-default").
+    The constant itself is gone in Stage 6e; we keep the literal here to
+    pin the historical value the bug used to fall back to.
     """
     calls = []
 
@@ -657,7 +659,10 @@ def test_generate_summary_service_forwards_workspace_id(monkeypatch):
     assert calls, "no strategy was called"
     kwargs = calls[0]
     assert kwargs["workspace_id"] == custom_workspace
-    assert kwargs["workspace_id"] != config.DEFAULT_WORKSPACE_ID
+    # Old fallback value the Stage 4 bug used to silently substitute. The
+    # constant is gone in Stage 6e — the literal is kept here as a
+    # regression guard.
+    assert kwargs["workspace_id"] != "dev-default"
 
 
 def test_export_summary_docx_service_uses_export_utils(monkeypatch):

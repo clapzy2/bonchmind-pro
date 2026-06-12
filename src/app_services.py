@@ -1,9 +1,10 @@
 """UI-neutral service functions for BonchMind.
 
-Stage 3b makes every service function take ``workspace_id`` as its first
-argument; ``api_app`` resolves it from ``current_user.personal_workspace.id``
-via the ``get_current_workspace_id`` dependency, so the authenticated request
-flow no longer touches ``config.DEFAULT_WORKSPACE_ID``.
+Every service function takes ``workspace_id`` as its first argument;
+``api_app`` resolves it from ``current_user.personal_workspace.id`` via the
+``get_current_workspace_id`` dependency. As of Stage 6e there is no implicit
+workspace fallback anywhere in the backend — ``KnowledgeBase`` /
+``summary_engine`` require ``workspace_id`` explicitly at every call site.
 
 Two pieces stay shared on purpose:
 

@@ -640,7 +640,8 @@ def test_summary_is_scoped_to_caller_workspace(api_client, monkeypatch, tmp_path
 def test_summary_search_call_carries_caller_workspace_id(api_client, monkeypatch, tmp_path):
     """Belt-and-braces: assert at the KB boundary that
     ``search_chunks_for_summary`` was invoked with the caller's workspace_id
-    (and never with DEFAULT_WORKSPACE_ID).
+    (and never with the legacy "dev-default" sentinel — the
+    DEFAULT_WORKSPACE_ID constant itself is gone in Stage 6e).
     """
     monkeypatch.setattr(app_services.config, "DOCS_DIR", str(tmp_path / "docs"))
     fake_kb = _SummaryFakeKB()
@@ -659,7 +660,8 @@ def test_summary_search_call_carries_caller_workspace_id(api_client, monkeypatch
     workspace_ids_seen = [call["workspace_id"] for call in fake_kb.search_calls]
     # generate_direct_topic_summary does exactly one search per call.
     assert workspace_ids_seen == [alice_workspace, bob_workspace]
-    assert app_services.config.DEFAULT_WORKSPACE_ID not in workspace_ids_seen
+    # Old legacy sentinel from the dev/Gradio era — regression guard.
+    assert "dev-default" not in workspace_ids_seen
 
 
 def test_superuser_reaches_diagnostics(api_client, monkeypatch):

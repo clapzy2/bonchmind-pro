@@ -234,7 +234,8 @@ def generate_selected_section_summary(
     section_filter,
     topic,
     summary_type,
-    workspace_id=config.DEFAULT_WORKSPACE_ID,
+    *,
+    workspace_id,
 ):
     """
     Быстрый конспект по выбранному разделу.
@@ -395,7 +396,8 @@ def generate_direct_topic_summary(
     summary_type,
     file_filter="all",
     section_filter=None,
-    workspace_id=config.DEFAULT_WORKSPACE_ID,
+    *,
+    workspace_id,
 ):
     """
     Быстрый тематический конспект для узких тем.
@@ -916,7 +918,8 @@ def _chunks_from_matching_sections(
     item,
     file_filter="all",
     limit=6,
-    workspace_id=config.DEFAULT_WORKSPACE_ID,
+    *,
+    workspace_id,
 ):
     """Быстро добирает чанки из разделов, название которых явно совпадает с пунктом."""
     if not hasattr(kb, "get_available_sections") or not hasattr(kb, "get_file_chunks"):
@@ -1220,7 +1223,8 @@ def retrieve_chunks_by_plan(
     file_filter="all",
     section_filter=None,
     target_chunks=None,
-    workspace_id=config.DEFAULT_WORKSPACE_ID,
+    *,
+    workspace_id,
 ):
     """
     Ищет чанки по нескольким подпунктам плана.
@@ -1306,7 +1310,8 @@ def retrieve_chunk_groups_by_plan(
     file_filter="all",
     section_filter=None,
     target_chunks=None,
-    workspace_id=config.DEFAULT_WORKSPACE_ID,
+    *,
+    workspace_id,
 ):
     """
     Ищет чанки отдельно для каждого пункта плана.
@@ -1408,7 +1413,8 @@ def generate_planned_topic_summary(
     summary_type,
     file_filter="all",
     section_filter=None,
-    workspace_id=config.DEFAULT_WORKSPACE_ID,
+    *,
+    workspace_id,
 ):
     """
     Универсальный тематический конспект.
@@ -1712,7 +1718,8 @@ def generate_full_file_summary(
     selected_section,
     summary_type,
     file_filter="all",
-    workspace_id=config.DEFAULT_WORKSPACE_ID,
+    *,
+    workspace_id,
 ):
     """No-topic, no-section fallback: map-reduce conspect over every chunk of
     ``file_filter`` in ``workspace_id``.
@@ -1780,7 +1787,8 @@ def generate_topic_summary(
     summary_type,
     file_filter="all",
     section_filter=None,
-    workspace_id=config.DEFAULT_WORKSPACE_ID,
+    *,
+    workspace_id,
 ):
     """
     Тематический конспект через semantic search + rerank.

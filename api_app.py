@@ -1,9 +1,11 @@
 """FastAPI entrypoint for BonchMind Pro.
 
-Stage 3a added authentication gates on every non-public endpoint.
-Stage 3b plumbs ``workspace_id`` from ``current_user.personal_workspace.id``
-through ``app_services`` to ``KnowledgeBase``, removing the
-``config.DEFAULT_WORKSPACE_ID`` bridge from the authenticated API flow.
+Authentication gates every non-public endpoint (Stage 3a). ``workspace_id``
+is plumbed from ``current_user.personal_workspace.id`` through
+``app_services`` to ``KnowledgeBase`` and ``summary_engine`` (Stages 3b/4).
+As of Stage 6e there is no implicit fallback: KB / summary methods require
+``workspace_id`` at every call site, and the legacy ``DEFAULT_WORKSPACE_ID``
+constant is gone.
 
 Endpoint access tiers:
 

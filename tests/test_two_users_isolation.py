@@ -520,10 +520,6 @@ class _SummaryFakeKB:
 
     def __init__(self):
         self.search_calls: list[dict] = []
-        # ``main._get_kb`` checks ``_kb._llm is None`` and calls ``set_llm()``
-        # when so; we pretend the LLM is already attached so the elif branch
-        # is a no-op and we don't have to stub ``set_llm`` here.
-        self._llm = object()
 
     def search_chunks_for_summary(
         self,
@@ -602,9 +598,9 @@ def test_summary_is_scoped_to_caller_workspace(api_client, monkeypatch, tmp_path
     response Alice sees must only quote Alice's chunks (workspace-marker)
     and never Bob's, and vice versa.
 
-    Regression guard for the full Stage 4 chain:
-    ``api_app → app_services.generate_summary_service → main.on_generate_summary
-     → summary_engine.generate_direct_topic_summary → kb.search_chunks_for_summary``.
+    Regression guard for the full Stage 4 chain (post-Stage-6d):
+    ``api_app → app_services.generate_summary_service →
+     summary_engine.generate_direct_topic_summary → kb.search_chunks_for_summary``.
     A bug anywhere in that chain that dropped ``workspace_id`` would cause
     the wrong marker to surface in the response.
     """

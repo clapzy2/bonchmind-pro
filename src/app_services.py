@@ -16,17 +16,17 @@ Two pieces stay shared on purpose:
   (``_material_progress_states`` keyed by ``workspace_id``) so a caller can
   never see another workspace's filename, progress percent or error.
 
-Summary generation bridges through ``main._kb`` / ``main.on_generate_summary``
-and now forwards ``workspace_id`` end-to-end into ``summary_engine.py``'s
-KB calls (Stage 4).
+Summary generation calls ``src.summary_engine`` strategies directly with
+``workspace_id`` threaded all the way through to ``KnowledgeBase`` (Stage 4),
+without going through the Gradio entrypoint (Stage 6d).
 """
 
 import os
 from threading import Lock, Thread
 
 import config
-import main
 from src import document_service, runtime
+from src import summary_engine
 from src.api_models import (
     ChatMessage,
     ChatRequest,
@@ -647,20 +647,97 @@ def start_reindex_material_service(workspace_id: str, file_name=None):
 def generate_summary_service(workspace_id: str, request: SummaryRequest):
     """Generate a summary scoped to ``workspace_id``.
 
-    ``workspace_id`` is forwarded into ``main.on_generate_summary`` and from
-    there into every ``summary_engine`` / KB call, so the resulting summary
-    only sees chunks from the authorised workspace.
+    Routes the request to the matching ``summary_engine`` strategy and
+    threads ``workspace_id`` through to every KB call. Replaces the
+    pre-Stage-6d bridge that detoured through ``main.on_generate_summary``
+    in the Gradio entrypoint.
     """
-    main._llm = runtime.get_llm()
-    main._kb = runtime.get_kb()
+    selected_file = _normalize_selected_file(request.selected_file)
+    selected_section = request.selected_section
+    topic = (request.topic or "").strip()
+    summary_type = request.summary_type
 
-    text = main.on_generate_summary(
-        workspace_id,
-        _normalize_selected_file(request.selected_file),
-        request.selected_section,
-        request.topic,
-        request.summary_type,
+    start_trace(
+        kind="summary",
+        request={
+            "workspace_id": workspace_id,
+            "selected_file": selected_file,
+            "selected_section": selected_section,
+            "topic": topic,
+            "summary_type": summary_type,
+        },
     )
+
+    try:
+        kb = runtime.get_kb()
+        llm = DiagnosticLLM(runtime.get_llm())
+
+        file_filter = "all" if selected_file == "Все файлы" else selected_file
+        section_filter = None
+        if selected_section and selected_section != "Все разделы":
+            section_filter = selected_section
+
+        if section_filter:
+            text = summary_engine.generate_selected_section_summary(
+                kb=kb,
+                llm=llm,
+                selected_file=selected_file,
+                section_filter=section_filter,
+                topic=topic,
+                summary_type=summary_type,
+                workspace_id=workspace_id,
+            )
+        elif topic:
+            summary_type_low = str(summary_type or "").lower()
+            if (
+                not summary_engine._looks_like_history_topic(topic)
+                and ("крат" in summary_type_low or "сред" in summary_type_low)
+            ):
+                text = summary_engine.generate_direct_topic_summary(
+                    kb=kb,
+                    llm=llm,
+                    topic=topic,
+                    summary_type=summary_type,
+                    file_filter=file_filter,
+                    section_filter=None,
+                    workspace_id=workspace_id,
+                )
+            elif getattr(config, "PLANNED_SUMMARY_ENABLED", True):
+                text = summary_engine.generate_planned_topic_summary(
+                    kb=kb,
+                    llm=llm,
+                    topic=topic,
+                    summary_type=summary_type,
+                    file_filter=file_filter,
+                    section_filter=None,
+                    workspace_id=workspace_id,
+                )
+            else:
+                text = summary_engine.generate_topic_summary(
+                    kb=kb,
+                    llm=llm,
+                    topic=topic,
+                    summary_type=summary_type,
+                    file_filter=file_filter,
+                    section_filter=None,
+                    workspace_id=workspace_id,
+                )
+        else:
+            # No topic, no section — generic map-reduce over the selected file.
+            text = summary_engine.generate_full_file_summary(
+                kb=kb,
+                llm=llm,
+                selected_file=selected_file,
+                selected_section=selected_section,
+                summary_type=summary_type,
+                file_filter=file_filter,
+                workspace_id=workspace_id,
+            )
+
+        finish_trace(output=text)
+    except Exception as error:
+        text = f"Ошибка: {error}"
+        finish_trace(output=text, error=error)
 
     return SummaryResponse(
         text=text,

@@ -143,8 +143,6 @@ Access-токен (`access_token` из ответа `/api/auth/{register,login}`
 
 У каждого пользователя один personal workspace (Stage 1-инвариант, см. `design/multi-user-architecture.md`). Frontend **не делает выбор workspace вручную** — backend на каждый запрос подставляет `current_user.personal_workspace.id`, а Topbar показывает его имя как read-only текст рядом с пользователем.
 
-### Legacy Gradio UI (DEPRECATED, удаляется в Stage 6d)
+### Legacy Gradio UI
 
-Старый Gradio-интерфейс (`python main.py`) пока остаётся в репозитории, но **deprecated**. При запуске печатает баннер с указанием перейти на Next.js + FastAPI.
-
-Пользоваться им в multi-user сценариях **не следует**: Gradio обходит auth и пишет всё в `config.DEFAULT_WORKSPACE_ID` минуя `Document` table, поэтому workspace-изоляция, которую обеспечивают Stages 3/4, через него не работает. Подробный parity-check Gradio ↔ Next.js — в `design/stage-6-parity.md`. Удаление кода и зависимости `gradio` — в подшаге 6d.
+Удалён в Stage 6d (`main.py`/`run.py` + `gradio` dependency убраны из репозитория). Причина — он обходил auth и писал всё в `config.DEFAULT_WORKSPACE_ID`, минуя `Document` table. Parity-check Gradio ↔ Next.js перед удалением — в `design/stage-6-parity.md`.

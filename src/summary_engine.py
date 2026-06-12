@@ -1705,6 +1705,74 @@ def generate_planned_topic_summary(
 
     return header + result
 
+def generate_full_file_summary(
+    kb,
+    llm,
+    selected_file,
+    selected_section,
+    summary_type,
+    file_filter="all",
+    workspace_id=config.DEFAULT_WORKSPACE_ID,
+):
+    """No-topic, no-section fallback: map-reduce conspect over every chunk of
+    ``file_filter`` in ``workspace_id``.
+
+    Moved out of ``main.on_generate_summary`` in Stage 6d so the only
+    callsite (``app_services.generate_summary_service``) no longer needs to
+    import the Gradio entrypoint. The ``selected_file`` / ``selected_section``
+    arguments are kept only to render the user-facing header — the actual
+    retrieval is driven by ``file_filter`` + ``workspace_id``.
+    """
+    set_strategy("full_file_map_reduce")
+    params = _summary_generation_params(summary_type)
+
+    chunks = kb.get_file_chunks(file_filter=file_filter, workspace_id=workspace_id)
+    if not chunks:
+        return "НЕТ ИНФОРМАЦИИ - база пуста или файл не проиндексирован."
+
+    group_size = params["group_size"]
+    partial_summaries = []
+
+    for i in range(0, len(chunks), group_size):
+        group = chunks[i:i + group_size]
+        context_parts = []
+        for chunk in group:
+            section = chunk["section"]
+            label = f'{chunk["source_file"]} | {section}' if section else chunk["source_file"]
+            context_parts.append(f"[{label}]\n{chunk['text']}")
+        context = "\n\n---\n\n".join(context_parts)
+
+        prompt = config.PROMPTS["summary_chunk"].format(
+            system=config.SYSTEM_PROMPT,
+            context=context,
+        )
+        partial = llm.call(prompt, max_tokens=params["chunk_tokens"])
+        if partial.strip():
+            partial_summaries.append(partial.strip())
+
+    combined_context = "\n\n---\n\n".join(partial_summaries)
+    final_prompt = config.PROMPTS["summary_reduce"].format(
+        system=config.SYSTEM_PROMPT,
+        context=combined_context,
+        summary_type=summary_type.lower(),
+    )
+    summary = llm.call(final_prompt, max_tokens=params["final_tokens"])
+
+    file_label = "всем материалам" if selected_file == "Все файлы" else selected_file
+    section_label = (
+        "всем разделам"
+        if selected_section == "Все разделы"
+        else selected_section
+    )
+    header = (
+        f"Конспект по материалу: {file_label}\n"
+        f"Раздел: {section_label}\n"
+        f"Тип: {summary_type.lower()}\n\n"
+    )
+
+    return header + summary
+
+
 def generate_topic_summary(
     kb,
     llm,

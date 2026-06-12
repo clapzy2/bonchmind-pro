@@ -48,11 +48,9 @@ http://127.0.0.1:3000
 - `Проверка качества` — разбор силы ответа, покрытия и слабых мест;
 - `Настройки` — пока заготовка под системные и продуктовые настройки.
 
-### Старый Gradio-интерфейс (DEPRECATED)
+### Legacy Gradio UI
 
-`main.py` (`python main.py` на `http://127.0.0.1:7860`) пока остаётся в репозитории, но **deprecated** и будет удалён в Stage 6d.
-
-Он намеренно обходит Stage 3+ auth и пишет всё в `config.DEFAULT_WORKSPACE_ID` минуя `Document` table — пользоваться им в режиме multi-user **не следует**: workspace-изоляция, которую обеспечивает Stage 3, через него не работает. Для всех новых сценариев используйте Next.js UI.
+Удалён в Stage 6d (`main.py`/`run.py` + `gradio` dependency). Причина — он обходил Stage 3+ auth и писал всё в `config.DEFAULT_WORKSPACE_ID` минуя `Document` table, поэтому workspace-изоляция, верифицированная `tests/test_two_users_isolation.py`, через него не работала. Если потребуется быстрый maintenance reset базы — отдельный CLI-скрипт, а не UI-кнопка.
 
 ---
 
@@ -62,7 +60,6 @@ http://127.0.0.1:3000
 
 - Python
 - FastAPI
-- Gradio _(legacy, deprecated — удаляется в Stage 6d)_
 - ChromaDB
 - sentence-transformers
 - BAAI/bge-m3
@@ -215,8 +212,6 @@ npm install
 
 ## Быстрый старт
 
-### Вариант A. Полный продуктовый интерфейс
-
 Терминал 1:
 
 ```powershell
@@ -234,18 +229,6 @@ npm run dev
 
 ```text
 http://127.0.0.1:3000
-```
-
-### Вариант B. Старый полный интерфейс Gradio
-
-```powershell
-python run.py
-```
-
-Открыть:
-
-```text
-http://127.0.0.1:7860
 ```
 
 ---

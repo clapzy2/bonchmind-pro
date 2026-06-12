@@ -555,17 +555,18 @@ def test_start_reindex_material_service_queues_background_job(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_generate_summary_service_calls_summary_handler(monkeypatch):
+def test_generate_summary_service_routes_section_to_selected_section_strategy(monkeypatch):
+    """With ``selected_section`` set, the service must dispatch to
+    ``summary_engine.generate_selected_section_summary`` and pass through
+    the request fields + ``workspace_id``."""
     calls = []
 
     monkeypatch.setattr(app_services.runtime, "get_llm", lambda: "llm")
     monkeypatch.setattr(app_services.runtime, "get_kb", lambda: "kb")
-    monkeypatch.setattr(app_services.main, "_llm", None)
-    monkeypatch.setattr(app_services.main, "_kb", None)
     monkeypatch.setattr(
-        app_services.main,
-        "on_generate_summary",
-        lambda *args: calls.append(args) or "summary text",
+        app_services.summary_engine,
+        "generate_selected_section_summary",
+        lambda **kwargs: calls.append(kwargs) or "summary text",
     )
     monkeypatch.setattr(app_services, "format_last_trace", lambda: "trace text")
 
@@ -581,23 +582,28 @@ def test_generate_summary_service_calls_summary_handler(monkeypatch):
 
     assert response.text == "summary text"
     assert response.diagnostics == "trace text"
-    assert app_services.main._llm == "llm"
-    assert app_services.main._kb == "kb"
-    assert calls[0][0] == WORKSPACE_ID
-    assert calls[0][1] == "a.pdf"
+    assert len(calls) == 1
+    kwargs = calls[0]
+    assert kwargs["workspace_id"] == WORKSPACE_ID
+    assert kwargs["selected_file"] == "a.pdf"
+    assert kwargs["section_filter"] == "Глава 1"
+    assert kwargs["topic"] == "Bluetooth"
+    assert kwargs["summary_type"] == "Средний"
 
 
 def test_generate_summary_service_normalizes_all_materials_label(monkeypatch):
+    """``Все материалы`` collapses to ``Все файлы`` before reaching the
+    strategy, and the strategy receives ``file_filter='all'``."""
     calls = []
 
     monkeypatch.setattr(app_services.runtime, "get_llm", lambda: "llm")
     monkeypatch.setattr(app_services.runtime, "get_kb", lambda: "kb")
-    monkeypatch.setattr(app_services.main, "_llm", None)
-    monkeypatch.setattr(app_services.main, "_kb", None)
+    # selected_section="Все разделы" + topic="Россия…" → no section_filter,
+    # history-shaped topic → planned strategy.
     monkeypatch.setattr(
-        app_services.main,
-        "on_generate_summary",
-        lambda *args: calls.append(args) or "summary text",
+        app_services.summary_engine,
+        "generate_planned_topic_summary",
+        lambda **kwargs: calls.append(kwargs) or "summary text",
     )
     monkeypatch.setattr(app_services, "format_last_trace", lambda: "trace text")
 
@@ -611,28 +617,28 @@ def test_generate_summary_service_normalizes_all_materials_label(monkeypatch):
         ),
     )
 
-    assert calls[0][0] == WORKSPACE_ID
-    assert calls[0][1] == "Все файлы"
+    assert len(calls) == 1
+    kwargs = calls[0]
+    assert kwargs["workspace_id"] == WORKSPACE_ID
+    assert kwargs["file_filter"] == "all"
+    assert kwargs["section_filter"] is None
 
 
 def test_generate_summary_service_forwards_workspace_id(monkeypatch):
-    """The caller's workspace_id must be passed through to ``on_generate_summary``.
+    """The caller's workspace_id must reach the chosen strategy.
 
     Regression guard for Stage 4: previously the service-layer accepted the
     argument but dropped it via ``del workspace_id``, which made the summary
-    silently read from ``config.DEFAULT_WORKSPACE_ID``. We assert here that
-    a custom workspace_id is propagated as the first positional argument.
+    silently read from ``config.DEFAULT_WORKSPACE_ID``.
     """
     calls = []
 
     monkeypatch.setattr(app_services.runtime, "get_llm", lambda: "llm")
     monkeypatch.setattr(app_services.runtime, "get_kb", lambda: "kb")
-    monkeypatch.setattr(app_services.main, "_llm", None)
-    monkeypatch.setattr(app_services.main, "_kb", None)
     monkeypatch.setattr(
-        app_services.main,
-        "on_generate_summary",
-        lambda *args, **kwargs: calls.append((args, kwargs)) or "summary text",
+        app_services.summary_engine,
+        "generate_selected_section_summary",
+        lambda **kwargs: calls.append(kwargs) or "summary text",
     )
     monkeypatch.setattr(app_services, "format_last_trace", lambda: "trace text")
 
@@ -648,11 +654,10 @@ def test_generate_summary_service_forwards_workspace_id(monkeypatch):
         ),
     )
 
-    assert calls, "on_generate_summary was not called"
-    args, _kwargs = calls[0]
-    assert args[0] == custom_workspace
-    assert args[0] != config.DEFAULT_WORKSPACE_ID
-    assert args[1:] == ("a.pdf", "Глава 1", "Bluetooth", "Средний")
+    assert calls, "no strategy was called"
+    kwargs = calls[0]
+    assert kwargs["workspace_id"] == custom_workspace
+    assert kwargs["workspace_id"] != config.DEFAULT_WORKSPACE_ID
 
 
 def test_export_summary_docx_service_uses_export_utils(monkeypatch):

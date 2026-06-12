@@ -5,7 +5,10 @@ def test_message_to_text_from_string():
     assert _message_to_text("Привет") == "Привет"
 
 
-def test_message_to_text_from_gradio_list():
+def test_message_to_text_from_message_parts_list():
+    # Historically used by the Gradio chat history shape; the parser stays
+    # for any caller that hands us a list of ``{"text": ..., "type": ...}``
+    # parts (e.g. exporting a chat answer back to DOCX).
     content = [{"text": "Цитаты из Речи Федра", "type": "text"}]
     assert _message_to_text(content) == "Цитаты из Речи Федра"
 

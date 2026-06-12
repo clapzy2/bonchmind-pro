@@ -21,9 +21,6 @@ chardet>=5.0.0
 # Экспорт
 python-pptx>=0.6.21
 
-# GUI
-gradio>=4.0.0
-
 # API backend
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0

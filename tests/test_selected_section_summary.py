@@ -63,7 +63,9 @@ def test_selected_section_with_topic_uses_search_inside_section():
     assert kb.used_search
     assert not kb.used_full_section
     assert llm.calls == 1
-    assert "Найдено фрагментов по теме: 1" in result
+    # Stage 7f removed the metadata header; assert the summary body is returned
+    # instead. The "search inside section" behaviour is covered above.
+    assert "Конспект по найденным фрагментам." in result
 
 
 class RankedFakeKnowledgeBase(FakeKnowledgeBase):
@@ -117,7 +119,9 @@ def test_direct_topic_summary_sends_most_relevant_chunks_first():
         workspace_id=TEST_WORKSPACE_ID,
     )
 
-    assert "Режим: прямой тематический поиск" in result
+    # Stage 7f removed the metadata header ("Режим: ..."); assert the body is
+    # returned. Relevance ordering is asserted below.
+    assert "Конспект по найденным фрагментам." in result
     assert llm.calls == 1
     assert llm.last_prompt.index("WiMAX") < llm.last_prompt.index("IEEE 802.11")
 
@@ -184,7 +188,10 @@ def test_direct_topic_summary_focuses_on_primary_section():
         workspace_id=TEST_WORKSPACE_ID,
     )
 
-    assert "Разделы источников: Глава 4" in result
+    # Stage 7f removed the "Разделы источников" header line; the primary-section
+    # focusing is verified by the prompt-content assertions below (noise chunks
+    # excluded, Глава 4 / 802.16 content kept).
+    assert "Конспект по найденным фрагментам." in result
     assert "Глава 1 общий обзор" not in llm.last_prompt
     assert "DFS" not in llm.last_prompt
     assert "Табличный технический хвост" not in llm.last_prompt

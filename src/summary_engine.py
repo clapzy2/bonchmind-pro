@@ -279,18 +279,12 @@ def generate_selected_section_summary(
             "• переиндексировать материал."
         )
 
-    header = (
-        f"Конспект по выбранному разделу\n"
-        f"Материал: {selected_file}\n"
-        f"Раздел: {section_filter}\n"
-        f"Тип: {summary_type.lower()}\n"
-    )
-
-    if topic:
-        header += f"Тема / период: {topic}\n"
-        header += f"Найдено фрагментов по теме: {len(chunks)}\n\n"
-    else:
-        header += f"Фрагментов раздела: {len(chunks)}\n\n"
+    # Stage 7f: the metadata header (Материал / Раздел / Тип / Найдено
+    # фрагментов / Разделы источников) was dropped from user-facing output —
+    # the UI already shows this context, and it read as technical noise on top
+    # of every конспект. Body only now; the header stays as an empty prefix so
+    # the existing `return header + body` sites are untouched.
+    header = ""
 
     if topic and "сред" in str(summary_type or "").lower():
         compact_context = _chunks_to_context(chunks[:8])
@@ -430,16 +424,9 @@ def generate_direct_topic_summary(
             "• переформулировать тему."
         )
 
-    section_label = section_filter if section_filter else "Все разделы"
-    header = (
-        f"Тематический конспект\n"
-        f"Тема / период: {topic}\n"
-        f"Раздел: {section_label}\n"
-        f"Тип: {summary_type.lower()}\n"
-        f"Режим: прямой тематический поиск\n"
-        f"Найдено фрагментов: {len(chunks)}\n\n"
-        f"Разделы источников: {_format_group_sources(chunks, limit=5)}\n\n"
-    )
+    # Stage 7f: metadata header removed from user-facing output (see
+    # generate_selected_section_summary). Body only.
+    header = ""
 
     if "крат" in str(summary_type or "").lower():
         return header + build_extractive_short_summary(
@@ -1475,21 +1462,9 @@ def generate_planned_topic_summary(
         for group in chunk_groups
     ]
 
-    header = (
-        f"Тематический конспект\n"
-        f"Тема / период: {topic}\n"
-        f"Раздел: {section_label}\n"
-        f"Тип: {summary_type.lower()}\n"
-        f"Режим: плановый тематический конспект\n"
-        f"Пунктов плана: {len(plan)}\n"
-        f"Найдено фрагментов: {len(topic_chunks)}\n\n"
-        f"План поиска:\n"
-        + "\n".join(f"• {item}" for item in plan)
-        + "\n\n"
-        f"Фрагменты по пунктам плана:\n"
-        + "\n".join(plan_stats)
-        + "\n\n"
-    )
+    # Stage 7f: metadata header removed from user-facing output (see
+    # generate_selected_section_summary). Body only.
+    header = ""
 
     if "крат" in str(summary_type or "").lower():
         return header + build_extractive_short_summary(topic, plan, chunk_groups)
@@ -1771,11 +1746,9 @@ def generate_full_file_summary(
         if selected_section == "Все разделы"
         else selected_section
     )
-    header = (
-        f"Конспект по материалу: {file_label}\n"
-        f"Раздел: {section_label}\n"
-        f"Тип: {summary_type.lower()}\n\n"
-    )
+    # Stage 7f: metadata header removed from user-facing output (see
+    # generate_selected_section_summary). Body only.
+    header = ""
 
     return header + summary
 
@@ -1871,13 +1844,9 @@ def generate_topic_summary(
 
     section_label = section_filter if section_filter else "Все разделы"
 
-    header = (
-        f"Тематический конспект\n"
-        f"Тема / период: {topic}\n"
-        f"Раздел: {section_label}\n"
-        f"Тип: {summary_type.lower()}\n"
-        f"Найдено фрагментов: {len(topic_chunks)}\n\n"
-    )
+    # Stage 7f: metadata header removed from user-facing output (see
+    # generate_selected_section_summary). Body only.
+    header = ""
 
     return header + result
 

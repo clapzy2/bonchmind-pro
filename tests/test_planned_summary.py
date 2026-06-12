@@ -744,7 +744,10 @@ def test_medium_planned_prompt_does_not_use_original_topic_as_section():
 
     assert f"- {topic}" not in plan_block
     assert f"Пункт плана: {topic}" not in llm.last_prompt
-    assert f"Тема / период: {topic}" in result
+    # Stage 7f removed the metadata header that echoed the topic; assert the
+    # summary body is returned instead. The "topic not used as a section/plan
+    # item" intent is covered by the assertions above and below.
+    assert "Средний конспект" in result
     assert "Не меняй юридический или политический статус" in llm.last_prompt
     assert "Не объединяй разные даты и процессы" in llm.last_prompt
     assert "Не используй оценочные слова" in llm.last_prompt

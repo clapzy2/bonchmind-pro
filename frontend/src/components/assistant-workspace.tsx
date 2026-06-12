@@ -8,6 +8,7 @@ import type { ChatMessage, ChatResponse, MaterialInfo } from "@/lib/api";
 import { sendChatMessage } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { Markdown } from "@/components/markdown";
 import { RunDiagnostics, buildChatQualitySignals } from "@/components/run-diagnostics";
 import { UploadInline } from "@/components/upload-inline";
 import { useMaterialOperations } from "@/lib/use-material-operations";
@@ -244,7 +245,11 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
                       </>
                     )}
                   </div>
-                  <div className="whitespace-pre-wrap text-sm leading-7 text-slate-200">{item.content}</div>
+                  {item.role === "user" ? (
+                    <div className="whitespace-pre-wrap text-sm leading-7 text-slate-200">{item.content}</div>
+                  ) : (
+                    <Markdown>{item.content}</Markdown>
+                  )}
                 </div>
               </div>
             ))}

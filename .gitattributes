@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings even when checked out on Windows, or the
+# container's /usr/bin/env sh shebang breaks (\r is not a valid path char).
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf

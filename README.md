@@ -197,6 +197,64 @@ Frontend будет доступен по адресу:
 http://127.0.0.1:3000
 ```
 
+Локальный dev-режим работает на SQLite и не требует Docker.
+
+---
+
+## Запуск через Docker (production-style)
+
+Запуск, приближенный к продакшену — Postgres + backend + frontend в контейнерах через `docker-compose`.
+
+### 1. Подготовить `.env`
+
+```powershell
+copy .env.example .env
+```
+
+Обязательно заполнить:
+
+* `JWT_SECRET_KEY` — секрет (без него compose не стартует):
+
+  ```powershell
+  python -c "import secrets; print(secrets.token_urlsafe(48))"
+  ```
+* `API_KEY` — ключ OpenRouter (при `LLM_MODE=api`);
+* `POSTGRES_PASSWORD` — пароль БД для любого реального развёртывания.
+
+### 2. Поднять стек
+
+```powershell
+docker compose up --build
+```
+
+Что произойдёт:
+
+1. Поднимается `db` (Postgres) и проходит healthcheck.
+2. `backend` дожидается healthy-БД, применяет миграции (`alembic upgrade head`) и стартует API на `0.0.0.0:8000` внутри сети.
+3. `frontend` (Next.js standalone) поднимается на порту `3000` и проксирует `/api/*` на `backend`.
+
+Открыть: `http://localhost:3000`
+
+> Первый старт backend медленный — скачиваются модели BGE-M3 и reranker (~2 ГБ) в том `models`. Дальше кэш переиспользуется.
+
+### Тома (данные переживают перезапуск)
+
+| Том | Что хранит |
+|-----|------------|
+| `pgdata` | Postgres: пользователи, workspace, документы |
+| `data` | ChromaDB-векторы (файловые) |
+| `docs` | загруженные материалы |
+| `models` | кэш моделей BGE-M3 / reranker |
+
+ChromaDB остаётся файловой и живёт в томе `data`; Postgres заменяет только реляционную БД. Перенос векторов в pgvector в Stage 8 не входит.
+
+### Остановить
+
+```powershell
+docker compose down            # остановить, тома сохранить
+docker compose down -v         # остановить и удалить тома (полный сброс)
+```
+
 ---
 
 ## Настройка `.env`

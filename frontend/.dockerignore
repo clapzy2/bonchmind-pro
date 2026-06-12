@@ -1,0 +1,15 @@
+# Frontend build context. node_modules is reinstalled via `npm ci`, build
+# artifacts and local state never go into the image.
+node_modules
+.next
+.git
+.gitignore
+.github
+*.md
+.env
+.env.local
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+Dockerfile
+.dockerignore

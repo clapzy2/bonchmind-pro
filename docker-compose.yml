@@ -1,0 +1,70 @@
+# Production-style stack for BonchMind Pro: Postgres + FastAPI backend +
+# Next.js frontend. Copy .env.example to .env, fill the secrets, then:
+#
+#   docker compose up --build
+#
+# The browser talks to the frontend (http://localhost:3000); the frontend
+# proxies /api/* to the backend over the internal network, so the backend is
+# not published to the host.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bonchmind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-bonchmind}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bonchmind} -d ${POSTGRES_DB:-bonchmind}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Relational store moves to Postgres; ChromaDB stays file-based under
+      # the `data` volume.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bonchmind}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-bonchmind}
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      LLM_MODE: ${LLM_MODE:-api}
+      API_KEY: ${API_KEY:-}
+      API_MODEL: ${API_MODEL:-qwen/qwen3-32b}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-10080}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      HF_HOME: /models
+    volumes:
+      - docs:/app/docs       # uploaded materials
+      - data:/app/data       # ChromaDB vectors (file-based)
+      - models:/models       # BGE-M3 + reranker cache (downloaded once)
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BONCHMIND_API_URL: http://backend:8000
+    depends_on:
+      - backend
+    environment:
+      BONCHMIND_API_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  docs:
+  data:
+  models:

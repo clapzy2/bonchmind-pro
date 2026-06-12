@@ -57,3 +57,20 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+  compose:
+    name: Compose config
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Lightweight structural validation of docker-compose.yml — interpolates
+      # env and parses the file without building images. Dummy secrets satisfy
+      # the required ${JWT_SECRET_KEY:?...} interpolation.
+      - name: Validate docker-compose.yml
+        run: docker compose config -q
+        env:
+          JWT_SECRET_KEY: ci-dummy-secret
+          POSTGRES_PASSWORD: ci-dummy
+          API_KEY: ci-dummy

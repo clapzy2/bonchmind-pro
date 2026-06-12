@@ -9,9 +9,9 @@ import { sendChatMessage } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
 import { Markdown } from "@/components/markdown";
-import { RunDiagnostics, buildChatQualitySignals } from "@/components/run-diagnostics";
 import { UploadInline } from "@/components/upload-inline";
 import { useMaterialOperations } from "@/lib/use-material-operations";
+import { useAuth } from "@/lib/auth-context";
 
 const UPLOAD_ACCEPT = ".pdf,.txt,.epub,.docx,.md,.fb2,.zip,.html,.htm";
 
@@ -22,6 +22,10 @@ type AssistantWorkspaceProps = {
 
 const answerModes = ["Обычный", "Кратко", "Только цитаты"];
 const ASSISTANT_PREFERENCES_KEY = "bonchmind-assistant-preferences";
+// Chat history survives F5. sessionStorage + owner-id stamp for the same
+// reason as the summary: replies and sources are workspace-scoped content
+// that must never surface for another account on a shared browser.
+const SESSION_KEY = "bonchmind-assistant-session";
 const quickPrompts = [
   "Объясни простыми словами ключевую идею.",
   "Сделай краткий ответ в 3-4 пунктах.",
@@ -35,6 +39,7 @@ type Notice = {
 
 export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWorkspaceProps) {
   const router = useRouter();
+  const { user } = useAuth();
   const materialOptions = useMemo(() => ["Все материалы", ...materials.map((material) => material.name)], [materials]);
 
   const [selectedFile, setSelectedFile] = useState(materialOptions[0] ?? "Все материалы");
@@ -98,6 +103,48 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
       JSON.stringify({ selectedFile, answerMode }),
     );
   }, [selectedFile, answerMode]);
+
+  // Restore the chat after F5, gated to the current user so one account never
+  // sees another's conversation on a shared browser.
+  useEffect(() => {
+    if (!user?.id) {
+      return;
+    }
+    const raw = window.sessionStorage.getItem(SESSION_KEY);
+    if (!raw) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as {
+        userId?: string;
+        history?: ChatMessage[];
+        lastResponse?: ChatResponse | null;
+      };
+      if (parsed.userId === user.id && Array.isArray(parsed.history)) {
+        // External-system (sessionStorage) restore, not derived render state.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setHistory(parsed.history);
+        if (parsed.lastResponse) {
+          setLastResponse(parsed.lastResponse);
+        }
+      } else if (parsed.userId !== user.id) {
+        window.sessionStorage.removeItem(SESSION_KEY);
+      }
+    } catch {
+      window.sessionStorage.removeItem(SESSION_KEY);
+    }
+  }, [user?.id]);
+
+  // Persist the conversation (stamped with the owner id) so it survives F5.
+  useEffect(() => {
+    if (!user?.id || history.length === 0) {
+      return;
+    }
+    window.sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({ userId: user.id, history, lastResponse }),
+    );
+  }, [history, lastResponse, user?.id]);
 
   useEffect(() => {
     const viewport = historyViewportRef.current;
@@ -344,18 +391,6 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
               ))}
             </div>
           </details>
-        ) : null}
-
-        {lastResponse ? (
-          <RunDiagnostics
-            title="Диагностика ответа"
-            meta={[
-              `Статус: ${lastResponse.trace?.status || "н/д"}`,
-              `Источников: ${lastResponse.sources?.length ?? 0}`,
-            ]}
-            {...buildChatQualitySignals(lastResponse)}
-            diagnostics={lastResponse.diagnostics}
-          />
         ) : null}
       </section>
     </div>

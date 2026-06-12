@@ -9,9 +9,9 @@ import { exportSummaryDocx, generateSummary } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
 import { Markdown } from "@/components/markdown";
-import { RunDiagnostics, buildSummaryQualitySignals } from "@/components/run-diagnostics";
 import { UploadInline } from "@/components/upload-inline";
 import { useMaterialOperations } from "@/lib/use-material-operations";
+import { useAuth } from "@/lib/auth-context";
 
 const UPLOAD_ACCEPT = ".pdf,.txt,.epub,.docx,.md,.fb2,.zip,.html,.htm";
 
@@ -23,6 +23,11 @@ type SummaryWorkspaceProps = {
 
 const summaryTypes = ["Краткий", "Средний", "Подробный"];
 const PREFERENCES_KEY = "bonchmind-summary-preferences";
+// Last generated summary survives F5. sessionStorage (not localStorage) so it
+// is per-tab and cleared on tab close, and it is stamped with the owner's
+// user id so a different account on the same browser can never restore it —
+// the summary body is workspace-scoped content.
+const RESULT_SESSION_KEY = "bonchmind-summary-result";
 
 type Notice = {
   tone: "success" | "warning" | "info";
@@ -35,6 +40,7 @@ function isChunkGroupArray(value: unknown): value is TraceChunkGroup[] {
 
 export function SummaryWorkspace({ materials, onResult, onLibraryChange }: SummaryWorkspaceProps) {
   const router = useRouter();
+  const { user } = useAuth();
   const materialOptions = useMemo(() => ["Все материалы", ...materials.map((material) => material.name)], [materials]);
 
   const [selectedFile, setSelectedFile] = useState(materialOptions[0] ?? "Все материалы");
@@ -107,6 +113,42 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
       }),
     );
   }, [selectedFile, summaryType, topic]);
+
+  // Restore the last summary after F5, but only if it belongs to the current
+  // user (workspace-scoped content must never surface for another account).
+  useEffect(() => {
+    if (!user?.id) {
+      return;
+    }
+    const raw = window.sessionStorage.getItem(RESULT_SESSION_KEY);
+    if (!raw) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as { userId?: string; result?: SummaryResponse };
+      if (parsed.userId === user.id && parsed.result) {
+        // External-system (sessionStorage) restore, not derived render state.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setResult(parsed.result);
+        onResult?.(parsed.result);
+      } else if (parsed.userId !== user.id) {
+        window.sessionStorage.removeItem(RESULT_SESSION_KEY);
+      }
+    } catch {
+      window.sessionStorage.removeItem(RESULT_SESSION_KEY);
+    }
+  }, [user?.id, onResult]);
+
+  // Persist the latest summary (stamped with the owner id) so it survives F5.
+  useEffect(() => {
+    if (!user?.id || !result) {
+      return;
+    }
+    window.sessionStorage.setItem(
+      RESULT_SESSION_KEY,
+      JSON.stringify({ userId: user.id, result }),
+    );
+  }, [result, user?.id]);
 
   async function handleGenerate() {
     const normalizedTopic = topic.trim();
@@ -346,14 +388,6 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
             </div>
           )}
         </section>
-      ) : null}
-
-      {result && !isLoading ? (
-        <RunDiagnostics
-          title="Диагностика запуска"
-          {...buildSummaryQualitySignals(result)}
-          diagnostics={result.diagnostics}
-        />
       ) : null}
 
       {showSources && coveredGroups.length > 0 ? (

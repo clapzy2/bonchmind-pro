@@ -56,9 +56,9 @@ export function AppShell({ health, materials, status }: AppShellProps) {
   const [activeSection, setActiveSection] = useState<WorkspaceSection>(() => {
     // SSR-safe initial read of the persisted tab; client-only because the
     // shell is "use client".
-    if (typeof window === "undefined") return "summary";
+    if (typeof window === "undefined") return "assistant";
     const stored = window.localStorage.getItem(ACTIVE_SECTION_KEY);
-    return isWorkspaceSection(stored) ? stored : "summary";
+    return isWorkspaceSection(stored) ? stored : "assistant";
   });
   const [materialsState, setMaterialsState] = useState<MaterialInfo[]>(() => getVisibleMaterials(materials));
   const [statusState, setStatusState] = useState<SystemStatus>(status);

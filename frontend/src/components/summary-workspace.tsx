@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, FileText, Loader2, Play, Search, Sparkles } from "lucide-react";
+import { Download, Loader2, Play, Search } from "lucide-react";
 
 import type { MaterialInfo, SummaryResponse, TraceChunkGroup } from "@/lib/api";
 import { exportSummaryDocx, generateSummary } from "@/lib/api";
@@ -32,7 +32,7 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
 
   const [selectedFile, setSelectedFile] = useState(materialOptions[0] ?? "Все материалы");
   const [summaryType, setSummaryType] = useState("Средний");
-  const [topic, setTopic] = useState("Россия после Николая II до 2000 года");
+  const [topic, setTopic] = useState("");
   const [result, setResult] = useState<SummaryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showSources, setShowSources] = useState(false);
@@ -179,10 +179,9 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
       <section className="bm-surface rounded-xl p-6 shadow-soft">
         <div className="mb-8 flex items-start justify-between gap-6">
           <div>
-            <p className="text-sm font-semibold text-brand">Конспекты</p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight text-white">Собрать конспект</h1>
-            <p className="mt-3 max-w-3xl text-base leading-7 text-muted">
-              Выберите материал и тему. BonchMind соберет конспект и сразу покажет, на чем именно он держится.
+            <h1 className="text-2xl font-bold tracking-tight text-white">Конспект</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
+              Выберите материал и тему — соберём конспект с опорой на источники.
             </p>
           </div>
           <button
@@ -218,34 +217,9 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
             className="bm-textarea min-h-32 w-full text-white"
             value={topic}
             onChange={(event) => setTopic(event.target.value)}
-            placeholder="Например: Bluetooth, широкополосные беспроводные сети, Россия после Николая II до 2000 года"
+            placeholder="Например: Что такое Wi-Fi?"
           />
         </label>
-
-        <div className="mt-5 grid gap-3 lg:grid-cols-3">
-          {[
-            {
-              title: "Тематический режим",
-              text: "Лучше всего работает для узкой темы или периода, когда нужен не пересказ главы, а именно выжимка по запросу.",
-            },
-            {
-              title: "Средний как базовый",
-              text: "Обычно это самый сильный режим для продукта: не слишком сухо, но и без тяжеловесного полотна текста.",
-            },
-            {
-              title: "Проверка источников",
-              text: "Сразу после генерации можно открыть покрытие и увидеть, какие разделы реально подтвердили каждый пункт.",
-            },
-          ].map((item) => (
-            <div key={item.title} className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                <Sparkles className="h-4 w-4 text-brand" />
-                {item.title}
-              </div>
-              <p className="mt-3 text-sm leading-6 text-muted">{item.text}</p>
-            </div>
-          ))}
-        </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-4">
           <button
@@ -307,40 +281,20 @@ export function SummaryWorkspace({ materials, onResult }: SummaryWorkspaceProps)
         ) : null}
       </section>
 
-      <section className="bm-surface rounded-xl p-6 shadow-soft">
-        <div className="mb-5 flex items-center gap-3">
-          <FileText className="h-5 w-5 text-brand" />
-          <h2 className="text-lg font-bold text-white">Результат</h2>
-        </div>
-
+      {isLoading || result ? (
+        <section className="bm-surface rounded-xl p-6 shadow-soft">
           {isLoading ? (
             <div className="bm-surface-deep flex min-h-72 items-center justify-center rounded-xl text-muted">
               <Loader2 className="mr-3 h-5 w-5 animate-spin text-brand" />
               BonchMind собирает источники и пишет конспект...
             </div>
-          ) : result ? (
-            <pre className="max-h-[560px] overflow-auto whitespace-pre-wrap rounded-xl border border-white/10 bg-[#0d1117] p-5 font-sans text-sm leading-7 text-slate-200">
-              {result.text}
-            </pre>
           ) : (
-            <div className="space-y-5 text-muted">
-              <h2 className="text-2xl font-bold text-white">Средний тематический конспект</h2>
-              <div>
-                <h3 className="font-bold text-white">Революция 1917 года и смена политической власти</h3>
-                <p className="mt-2 leading-7">
-                  Первая мировая война усилила экономический кризис, а события февраля и октября 1917 года
-                  изменили политическую систему страны.
-                </p>
-              </div>
-              <div>
-                <h3 className="font-bold text-white">Гражданская война и советская власть</h3>
-                <p className="mt-2 leading-7">
-                  Конспект появится здесь после запуска и будет опираться только на найденные фрагменты.
-                </p>
-              </div>
-            </div>
+            <pre className="max-h-[560px] overflow-auto whitespace-pre-wrap rounded-xl border border-white/10 bg-[#0d1117] p-5 font-sans text-sm leading-7 text-slate-200">
+              {result?.text}
+            </pre>
           )}
-      </section>
+        </section>
+      ) : null}
 
       {showSources && plannedGroups.length > 0 ? (
         <section className="bm-surface rounded-xl p-6 shadow-soft">

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, BadgeCheck, BookOpenText, Bot, Loader2, MessageSquareQuote, Send, Sparkles } from "lucide-react";
+import { Bot, Loader2, MessageSquareQuote, Send, Sparkles } from "lucide-react";
 
 import type { ChatMessage, ChatResponse, MaterialInfo } from "@/lib/api";
 import { sendChatMessage } from "@/lib/api";
@@ -13,36 +13,12 @@ type AssistantWorkspaceProps = {
   materials: MaterialInfo[];
 };
 
-const answerModes = ["Обычный", "Кратко", "Подробно", "Только цитаты"];
+const answerModes = ["Обычный", "Кратко", "Только цитаты"];
 const ASSISTANT_PREFERENCES_KEY = "bonchmind-assistant-preferences";
 const quickPrompts = [
-  "Объясни простыми словами ключевую идею раздела.",
-  "Сделай краткий ответ по теме в 3-4 пунктах.",
-  "Приведи только подтверждающие цитаты из материала.",
-  "Сравни два важных понятия из текущего материала.",
-];
-const studyScenarios = [
-  {
-    title: "Понять тему",
-    description: "Когда нужно быстро врубиться в смысл и не утонуть в формулировках учебника.",
-    prompt: "Объясни тему простыми словами, потом выдели 3 ключевые идеи и 1 типичную ошибку в понимании.",
-  },
-  {
-    title: "Повторить перед занятием",
-    description: "Сжать материал до опорных пунктов и быстро пробежать глазами перед парой или созвоном.",
-    prompt: "Сделай краткое повторение темы: 5 опорных пунктов, 3 термина и 1 короткий вывод.",
-  },
-  {
-    title: "Самопроверка",
-    description: "Не оценивать вместо преподавателя, а помочь самому понять, что ты реально помнишь.",
-    prompt:
-      "Сделай режим самопроверки по теме: задай 5 вопросов по материалу по одному, не ставь оценку, а после каждого моего ответа коротко скажи, чего не хватает и на что обратить внимание.",
-  },
-  {
-    title: "Подготовка по цитатам",
-    description: "Когда важно держаться строго за текст и не подмешивать лишние интерпретации.",
-    prompt: "Собери по теме ключевые цитаты и коротко подпиши, какую мысль каждая из них подтверждает.",
-  },
+  "Объясни простыми словами ключевую идею.",
+  "Сделай краткий ответ в 3-4 пунктах.",
+  "Приведи подтверждающие цитаты из материала.",
 ];
 
 type Notice = {
@@ -163,26 +139,14 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
     },
   ];
 
-  const confidenceTone =
-    lastResponse?.confidence_label === "high"
-      ? "bg-emerald-500/12 text-emerald-200"
-      : lastResponse?.confidence_label === "medium"
-        ? "bg-cyan-500/12 text-cyan-200"
-        : lastResponse?.confidence_label === "system"
-          ? "bg-white/8 text-slate-200"
-          : "bg-amber-500/12 text-amber-200";
-
   return (
     <div className="space-y-6">
       <section className="bm-surface rounded-xl p-6 shadow-soft">
-        <div className="flex flex-wrap items-start justify-between gap-6">
-          <div className="max-w-3xl">
-            <p className="text-sm font-semibold text-brand">Ассистент</p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight text-white">Разобрать материал в диалоге</h1>
-            <p className="mt-3 text-base leading-7 text-muted">
-              Здесь важен не один длинный запрос, а живая серия уточнений. Спросили, сузили, перепроверили цитатами, пошли дальше.
-            </p>
-          </div>
+        <div className="max-w-3xl">
+          <h1 className="text-2xl font-bold tracking-tight text-white">Ассистент</h1>
+          <p className="mt-2 text-sm leading-6 text-muted">
+            Задайте вопрос по загруженным материалам — ассистент ответит с опорой на источники.
+          </p>
         </div>
 
         <div className="mt-6 grid gap-5 xl:grid-cols-[1.12fr_0.88fr]">
@@ -193,7 +157,7 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
             onChange={setSelectedFile}
           />
           <SegmentedControl
-            label="Тип ответа"
+            label="Стиль ответа"
             options={answerModes}
             value={answerMode}
             onChange={setAnswerMode}
@@ -214,17 +178,12 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
-        <div className="bm-surface flex min-h-[82vh] flex-col rounded-xl p-6 shadow-soft">
-          <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-3">
-                <MessageSquareQuote className="h-5 w-5 text-brand" />
-                <h2 className="text-lg font-bold text-white">Диалог</h2>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-muted">
-                Ведите тему короткими follow-up вопросами. Так ассистент держит контекст и отвечает ощутимо сильнее.
-              </p>
+      <section className="space-y-6">
+        <div className="bm-surface flex min-h-[72vh] flex-col rounded-xl p-6 shadow-soft">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <MessageSquareQuote className="h-5 w-5 text-brand" />
+              <h2 className="text-lg font-bold text-white">Диалог</h2>
             </div>
             <div className="flex flex-wrap gap-2">
               <div className="rounded-full border border-white/10 bg-[#0f1319] px-3 py-1.5 text-xs font-semibold text-slate-200">
@@ -237,22 +196,6 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
           </div>
 
           <div ref={historyViewportRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2 assistant-scroll">
-            {history.length === 0 ? (
-              <div className="grid gap-3 lg:grid-cols-2">
-                {studyScenarios.map((item) => (
-                  <button
-                    key={item.title}
-                    type="button"
-                    onClick={() => setMessage(item.prompt)}
-                    className="rounded-xl border border-white/10 bg-[#0f1319] p-4 text-left transition hover:border-white/20 hover:bg-[#131923] hover:shadow-[0_12px_24px_rgba(0,0,0,0.12)]"
-                  >
-                    <div className="text-sm font-semibold text-white">{item.title}</div>
-                    <div className="mt-3 text-sm leading-6 text-muted">{item.description}</div>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
             {visibleHistory.map((item, index) => (
               <div
                 key={`${item.role}-${index}`}
@@ -326,108 +269,31 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
           </div>
         </div>
 
-        <div className="space-y-6">
-          <section className="bm-surface rounded-xl p-6 shadow-soft">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-white">Смысл последнего ответа</h2>
-                <p className="mt-2 text-sm leading-7 text-muted">
-                  Короткий итог, уверенность и удобные следующие шаги.
-                </p>
-              </div>
-              <div className={`rounded-full px-3 py-1.5 text-xs font-semibold ${confidenceTone}`}>
-                {lastResponse?.confidence_label || "idle"}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                <BadgeCheck className="h-4 w-4 text-brand" />
-                Короткий итог
-              </div>
-              <p className="mt-3 text-sm leading-7 text-slate-200">
-                {lastResponse?.summary || "После первого ответа здесь появится короткий, человеческий итог без лишней воды."}
-              </p>
-            </div>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <BookOpenText className="h-4 w-4 text-brand" />
-                  Что понял бот
-                </div>
-                <p className="mt-3 text-sm leading-7 text-muted">
-                  {message.trim()
-                    ? "Последний запрос уже в работе или готов к отправке."
-                    : "Ассистент особенно хорош, когда вы ведете тему короткими уточнениями."}
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <ArrowUpRight className="h-4 w-4 text-brand" />
-                  Следующий ход
-                </div>
-                <p className="mt-3 text-sm leading-7 text-muted">
-                  Обычно дальше полезно: упростить, сравнить или проверить цитатами.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="text-sm font-semibold text-white">Что спросить дальше</div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {(lastResponse?.followup_suggestions?.length
-                  ? lastResponse.followup_suggestions
-                  : [
-                      "Объясни это простыми словами.",
-                      "Сделай краткий вывод по теме.",
-                      "Покажи подтверждающие цитаты.",
-                    ]).map((prompt) => (
-                  <button
-                    key={prompt}
-                    className="rounded-full border border-white/10 bg-[#0d1117] px-4 py-2 text-sm text-slate-200 transition hover:border-white/20 hover:bg-[#131923]"
-                    type="button"
-                    onClick={() => setMessage(prompt)}
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="bm-surface rounded-xl p-6 shadow-soft">
-            <h2 className="text-lg font-bold text-white">Источники ответа</h2>
-            <p className="mt-2 text-sm leading-7 text-muted">
-              Ближайшие подтверждающие разделы для последнего ответа.
-            </p>
-
-            <div className="mt-5 max-h-[320px] space-y-3 overflow-y-auto pr-1 assistant-scroll">
-              {lastResponse?.sources?.length ? (
-                lastResponse.sources.map((source, index) => (
-                  <div key={`${source.label}-${index}`} className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-white">{source.label}</div>
-                        <div className="mt-1 text-xs text-muted">
-                          {source.source_file || "Источник без имени"}
-                        </div>
-                      </div>
-                      <div className="rounded-full bg-white/5 px-2.5 py-1 text-xs font-semibold text-slate-200">
-                        {source.score.toFixed(3)}
-                      </div>
+        {lastResponse?.sources?.length ? (
+          <details className="bm-surface rounded-xl p-4 shadow-soft">
+            <summary className="cursor-pointer text-sm font-semibold text-white">
+              Источники ответа · {lastResponse.sources.length}
+            </summary>
+            <div className="mt-4 space-y-2">
+              {lastResponse.sources.map((source, index) => (
+                <div
+                  key={`${source.label}-${index}`}
+                  className="flex items-start justify-between gap-3 rounded-lg border border-white/10 bg-[#0f1319] px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-white">{source.label}</div>
+                    <div className="mt-1 truncate text-xs text-muted">
+                      {source.source_file || "Источник без имени"}
                     </div>
                   </div>
-                ))
-              ) : (
-                <div className="rounded-xl border border-dashed border-white/10 bg-[#0f1319] p-4 text-sm muted">
-                  После первого ответа здесь появятся подтверждающие разделы.
+                  <div className="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-xs font-semibold text-slate-200">
+                    {source.score.toFixed(2)}
+                  </div>
                 </div>
-              )}
+              ))}
             </div>
-          </section>
-
-        </div>
+          </details>
+        ) : null}
       </section>
     </div>
   );

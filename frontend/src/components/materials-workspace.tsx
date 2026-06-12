@@ -4,14 +4,10 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import { useRouter } from "next/navigation";
 import {
   BookCopy,
-  BookOpenText,
-  Database,
-  FileSearch,
   LibraryBig,
   Loader2,
   RefreshCcw,
   Search,
-  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -19,7 +15,6 @@ import {
 import {
   deleteMaterial,
   getMaterialProgress,
-  getMaterialSections,
   reindexLibrary,
   reindexMaterial,
   uploadMaterial,
@@ -53,32 +48,23 @@ const idleProgress: MaterialProgressResponse = {
 };
 
 function getMaterialBadge(label: string) {
-  if (label === "ready") {
+  if (label === "ready" || label === "plain_text") {
     return {
       className: "bm-chip bm-chip-ready",
-      text: "готов",
-    };
-  }
-
-  if (label === "plain_text") {
-    return {
-      className: "bm-chip bm-chip-plain",
-      text: "сплошной текст",
+      text: "Готов",
     };
   }
 
   return {
     className: "bm-chip bm-chip-limited",
-      text: "ограничен",
+    text: "Требует проверки",
   };
 }
 
-export function MaterialsWorkspace({ materials, status, onLibraryChange }: MaterialsWorkspaceProps) {
+export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWorkspaceProps) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [selectedMaterial, setSelectedMaterial] = useState(materials[0]?.name ?? "");
-  const [sectionsCache, setSectionsCache] = useState<Record<string, string[]>>({});
-  const [isLoadingSections, setIsLoadingSections] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -90,7 +76,6 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
   const isAnyOperationRunning = isUploading || isDeleting || isReindexingMaterial || isReindexingLibrary;
 
   const syncLibraryState = useCallback(async () => {
-    setSectionsCache({});
     await onLibraryChange?.();
   }, [onLibraryChange]);
 
@@ -106,7 +91,6 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
   const [prevFilteredMaterials, setPrevFilteredMaterials] = useState(filteredMaterials);
 
   const selectedMaterialInfo = materials.find((material) => material.name === selectedMaterial) ?? null;
-  const sections = selectedMaterial ? (sectionsCache[selectedMaterial] ?? []) : [];
 
   useEffect(() => {
     if (!materials.length) {
@@ -148,50 +132,6 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
       }),
     );
   }, [selectedMaterial]);
-
-  useEffect(() => {
-    if (!selectedMaterial || sectionsCache[selectedMaterial]) {
-      return;
-    }
-
-    let isCancelled = false;
-
-    async function loadSections() {
-      setIsLoadingSections(true);
-      setNotice({
-        tone: "info",
-        text: "BonchMind читает структуру выбранного материала.",
-      });
-
-      const response = await getMaterialSections(selectedMaterial);
-      if (isCancelled) {
-        return;
-      }
-
-      setSectionsCache((current) => ({
-        ...current,
-        [selectedMaterial]: response.sections,
-      }));
-      setNotice(null);
-      setIsLoadingSections(false);
-    }
-
-    loadSections().catch(() => {
-      if (isCancelled) {
-        return;
-      }
-
-      setNotice({
-        tone: "warning",
-        text: "Не удалось получить список разделов. Проверьте backend и повторите попытку.",
-      });
-      setIsLoadingSections(false);
-    });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [sectionsCache, selectedMaterial]);
 
   if (filteredMaterials !== prevFilteredMaterials) {
     setPrevFilteredMaterials(filteredMaterials);
@@ -332,13 +272,13 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
     }
   }
 
-  async function handleDeleteSelected() {
-    if (!selectedMaterial || isDeleting) {
+  async function handleDeleteSelected(materialName: string = selectedMaterial) {
+    if (!materialName || isDeleting) {
       return;
     }
 
     const isConfirmed = window.confirm(
-      `Удалить материал "${selectedMaterial}" из сайта и из индекса BonchMind?`,
+      `Удалить материал "${materialName}" из сайта и из индекса BonchMind?`,
     );
     if (!isConfirmed) {
       return;
@@ -350,18 +290,18 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
       active: true,
       operation: "delete",
       phase: "queued",
-      message: `Ставлю в очередь удаление ${selectedMaterial}`,
+      message: `Ставлю в очередь удаление ${materialName}`,
       progress: 0,
-      current_file: selectedMaterial,
+      current_file: materialName,
       error: "",
     });
     setNotice({
       tone: "info",
-      text: `Удаляю ${selectedMaterial} из библиотеки и векторной базы.`,
+      text: `Удаляю ${materialName} из библиотеки и векторной базы.`,
     });
 
     try {
-      const response = await deleteMaterial(selectedMaterial);
+      const response = await deleteMaterial(materialName);
       if (!response.ok) {
         setNotice({
           tone: "warning",
@@ -388,14 +328,14 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
         phase: "error",
         message: "Удаление завершилось с ошибкой",
         progress: 100,
-        current_file: selectedMaterial,
+        current_file: materialName,
         error: "delete_failed",
       });
     }
   }
 
-  async function handleReindexSelected() {
-    if (!selectedMaterial || isReindexingMaterial) {
+  async function handleReindexSelected(materialName: string = selectedMaterial) {
+    if (!materialName || isReindexingMaterial) {
       return;
     }
 
@@ -405,18 +345,18 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
       active: true,
       operation: "reindex_material",
       phase: "queued",
-      message: `Ставлю в очередь переиндексацию ${selectedMaterial}`,
+      message: `Ставлю в очередь переиндексацию ${materialName}`,
       progress: 0,
-      current_file: selectedMaterial,
+      current_file: materialName,
       error: "",
     });
     setNotice({
       tone: "info",
-      text: `Переиндексирую ${selectedMaterial}. Это полезно после замены файла или очистки структуры.`,
+      text: `Переиндексирую ${materialName}. Это полезно после замены файла или очистки структуры.`,
     });
 
     try {
-      const response = await reindexMaterial(selectedMaterial);
+      const response = await reindexMaterial(materialName);
       if (!response.ok) {
         setNotice({
           tone: "warning",
@@ -425,7 +365,6 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
         setIsReindexingMaterial(false);
         setHasPendingSync(false);
       } else {
-        setSelectedMaterial(selectedMaterial);
         setNotice({
           tone: "info",
           text: response.message,
@@ -444,7 +383,7 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
         phase: "error",
         message: "Переиндексация завершилась с ошибкой",
         progress: 100,
-        current_file: selectedMaterial,
+        current_file: materialName,
         error: "reindex_material_failed",
       });
     }
@@ -573,23 +512,14 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
           </div>
         ) : null}
 
-        <div className="mt-8 grid gap-4 lg:grid-cols-4">
+        <div className="mt-8 grid gap-4 sm:grid-cols-2">
           <div className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
             <div className="flex items-center gap-2 text-white">
               <LibraryBig className="h-4 w-4 text-brand" />
               <span className="text-sm font-semibold">Материалы</span>
             </div>
             <div className="mt-4 text-3xl font-bold text-white">{materials.length}</div>
-            <p className="mt-2 text-sm leading-6 text-muted">доступны в библиотеке нового интерфейса</p>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
-            <div className="flex items-center gap-2 text-white">
-              <Database className="h-4 w-4 text-[var(--source)]" />
-              <span className="text-sm font-semibold">Фрагменты</span>
-            </div>
-            <div className="mt-4 text-3xl font-bold text-white">{status.total_chunks}</div>
-            <p className="mt-2 text-sm leading-6 text-muted">уже готовы для retrieval и генерации</p>
+            <p className="mt-2 text-sm leading-6 text-muted">в вашей библиотеке</p>
           </div>
 
           <div className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
@@ -601,185 +531,126 @@ export function MaterialsWorkspace({ materials, status, onLibraryChange }: Mater
               {selectedMaterialInfo?.name ?? "Материал не выбран"}
             </div>
             <p className="mt-2 text-sm leading-6 text-muted">
-              {selectedMaterialInfo ? `${selectedMaterialInfo.sections_count} разделов по текущим данным` : "Выберите книгу для просмотра структуры"}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
-            <div className="flex items-center gap-2 text-white">
-              <Sparkles className="h-4 w-4 text-brand" />
-              <span className="text-sm font-semibold">Назначение</span>
-            </div>
-            <p className="mt-4 text-sm leading-7 text-muted">
-              Быстрый контроль: что уже готово для поиска, а что еще стоит проверить.
+              {selectedMaterialInfo ? "Действия доступны прямо в карточке." : "Выберите материал из списка ниже."}
             </p>
           </div>
         </div>
       </section>
 
-      <div className="grid min-h-0 flex-1 gap-6 xl:grid-cols-[0.92fr_1.08fr]">
-        <section className="bm-surface flex min-h-0 flex-col rounded-xl p-6 shadow-soft">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold text-brand">Навигация по базе</p>
-              <h2 className="mt-2 text-xl font-bold text-white">Список материалов</h2>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-[#0d1117] px-3 py-2 text-sm text-slate-200">
-              {filteredMaterials.length} из {materials.length}
-            </div>
+      <section className="bm-surface flex min-h-0 flex-1 flex-col rounded-xl p-6 shadow-soft">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-white">Список материалов</h2>
           </div>
+          <div className="rounded-lg border border-white/10 bg-[#0d1117] px-3 py-2 text-sm text-slate-200">
+            {filteredMaterials.length} из {materials.length}
+          </div>
+        </div>
 
-          <label className="mt-5 block">
-            <span className="sr-only">Поиск по материалам</span>
-            <div className="bm-control flex h-12 items-center gap-3 rounded-xl px-4">
-              <Search className="h-4 w-4 text-muted" />
-              <input
-                className="w-full bg-transparent text-sm text-white outline-none placeholder:text-[#677384]"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Найти книгу, учебник или базу"
-              />
-            </div>
-          </label>
+        <label className="mt-5 block">
+          <span className="sr-only">Поиск по материалам</span>
+          <div className="bm-control flex h-12 items-center gap-3 rounded-xl px-4">
+            <Search className="h-4 w-4 text-muted" />
+            <input
+              className="w-full bg-transparent text-sm text-white outline-none placeholder:text-[#677384]"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Найти материал по имени"
+            />
+          </div>
+        </label>
 
-          <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1 assistant-scroll">
-            <div className="space-y-3">
-              {filteredMaterials.length > 0 ? (
-                filteredMaterials.map((material) => {
+        {notice ? (
+          <div
+            className={`mt-5 rounded-md px-4 py-3 text-sm ${
+              notice.tone === "warning"
+                ? "border border-amber-500/30 bg-amber-500/10 text-amber-100"
+                : notice.tone === "success"
+                  ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                  : "border border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
+            }`}
+          >
+            {notice.text}
+          </div>
+        ) : null}
+
+        <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1 assistant-scroll">
+          <div className="space-y-3">
+            {filteredMaterials.length > 0 ? (
+              filteredMaterials.map((material) => {
                 const isActive = material.name === selectedMaterial;
                 const badge = getMaterialBadge(material.quality_label);
+                const isMaterialBusy = isActive && (isReindexingMaterial || isDeleting);
 
                 return (
-                  <button
+                  <div
                     key={material.name}
-                    type="button"
                     onClick={() => setSelectedMaterial(material.name)}
-                    className={`w-full rounded-lg border p-4 text-left transition ${
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedMaterial(material.name);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    className={`flex w-full flex-wrap items-center justify-between gap-3 rounded-lg border p-4 text-left transition ${
                       isActive
                         ? "border-brand bg-[rgba(240,90,26,0.09)] shadow-[0_12px_28px_rgba(0,0,0,0.14)]"
                         : "border-white/10 bg-[#0f1319] hover:border-white/20 hover:bg-[#121823]"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-white">{material.name}</div>
-                        <div className="mt-2 flex items-center gap-2 text-xs">
-                          <span className="uppercase tracking-[0.18em] text-white/40">
-                            {material.sections_count} разделов
-                          </span>
-                          <span
-                            className={badge.className}
-                          >
-                            {badge.text}
-                          </span>
-                        </div>
-                        <div className="mt-2 text-xs leading-5 text-muted">{material.quality_reason}</div>
-                      </div>
-                      <FileSearch className={`h-4 w-4 shrink-0 ${isActive ? "text-brand" : "text-white/35"}`} />
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="min-w-0 truncate text-sm font-semibold text-white">{material.name}</div>
+                      <span className={badge.className}>{badge.text}</span>
                     </div>
-                  </button>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedMaterial(material.name);
+                          void handleReindexSelected(material.name);
+                        }}
+                        disabled={isAnyOperationRunning}
+                        className="bm-button-secondary h-9 px-3 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isMaterialBusy && isReindexingMaterial ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCcw className="h-3.5 w-3.5" />
+                        )}
+                        Переиндексировать
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedMaterial(material.name);
+                          void handleDeleteSelected(material.name);
+                        }}
+                        disabled={isAnyOperationRunning}
+                        className="bm-button-danger h-9 px-3 text-xs font-medium text-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isMaterialBusy && isDeleting ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                        Удалить
+                      </button>
+                    </div>
+                  </div>
                 );
               })
-              ) : (
-                <div className="rounded-lg border border-dashed border-white/10 bg-[#0f1319] p-5 text-sm leading-7 text-muted">
-                  По этому запросу материалы не найдены. Попробуйте часть имени файла или очистите поиск.
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="bm-surface flex min-h-0 flex-col rounded-xl p-6 shadow-soft">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold text-brand">Структура материала</p>
-              <h2 className="mt-2 text-xl font-bold text-white">
-                {selectedMaterialInfo?.name ?? "Выберите материал"}
-              </h2>
-              <p className="mt-3 text-sm leading-7 text-muted">
-                Разделы, доступные для поиска, конспектов и ссылок на источник.
-              </p>
-            </div>
-            <BookOpenText className="mt-1 h-5 w-5 text-brand" />
-          </div>
-
-          {notice ? (
-            <div
-              className={`mt-5 rounded-md px-4 py-3 text-sm ${
-                notice.tone === "warning"
-                  ? "border border-amber-500/30 bg-amber-500/10 text-amber-100"
-                  : notice.tone === "success"
-                    ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
-                  : "border border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
-              }`}
-            >
-              {notice.text}
-            </div>
-          ) : null}
-
-          <div className="mt-5 rounded-xl border border-white/10 bg-[#0d1117] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-              <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200">
-                Файл: <span className="text-white">{selectedMaterialInfo?.name ?? "не выбран"}</span>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200">
-                Разделы: <span className="text-white">{selectedMaterialInfo?.sections_count ?? 0}</span>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-slate-200">
-                Загружено: <span className="text-white">{sections.length}</span>
-              </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={handleReindexSelected}
-                  disabled={!selectedMaterialInfo || isAnyOperationRunning}
-                  className="bm-button-secondary h-10 px-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isReindexingMaterial ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-                  Переиндексировать
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDeleteSelected}
-                  disabled={!selectedMaterialInfo || isAnyOperationRunning}
-                  className="bm-button-danger h-10 px-3 text-sm font-medium text-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                  Удалить
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1 assistant-scroll">
-            {isLoadingSections ? (
-              <div className="flex min-h-56 items-center justify-center rounded-lg border border-white/10 bg-[#0d1117] text-muted">
-                <Loader2 className="mr-3 h-5 w-5 animate-spin text-brand" />
-                Читаю разделы выбранного материала...
-              </div>
-            ) : !selectedMaterialInfo ? (
-              <div className="rounded-lg border border-dashed border-white/10 bg-[#0d1117] p-5 text-sm leading-7 text-muted">
-                Слева появится список книг. Выберите одну из них, и здесь откроется ее структура.
-              </div>
-            ) : sections.length > 0 ? (
-              <div className="grid gap-3 md:grid-cols-2">
-                {sections.map((section, index) => (
-                  <div key={`${section}-${index}`} className="rounded-xl border border-white/10 bg-[#0f1319] p-4">
-                    <div className="text-xs uppercase tracking-[0.18em] text-white/35">Раздел {index + 1}</div>
-                    <div className="mt-3 text-sm font-semibold leading-6 text-white">{section}</div>
-                  </div>
-                ))}
-              </div>
             ) : (
-              <div className="rounded-lg border border-dashed border-white/10 bg-[#0d1117] p-5 text-sm leading-7 text-muted">
-                У этого материала нет явных разделов. Его все равно можно использовать в ассистенте и поиске как сплошной текст.
+              <div className="rounded-lg border border-dashed border-white/10 bg-[#0f1319] p-5 text-sm leading-7 text-muted">
+                По этому запросу материалы не найдены. Очистите поиск или загрузите новый файл.
               </div>
             )}
           </div>
-        </section>
-      </div>
+        </div>
+      </section>
     </div>
   );
 }

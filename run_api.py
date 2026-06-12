@@ -19,10 +19,14 @@ def main():
 
     import uvicorn
 
+    # Host/port are env-driven so the same entrypoint serves local dev and
+    # Docker. Default host stays 127.0.0.1 (loopback only) for local runs; the
+    # container sets API_HOST=0.0.0.0 so the frontend container can reach it.
+    host = os.getenv("API_HOST", "127.0.0.1")
     port = int(os.getenv("API_PORT", "8000"))
     print("BonchMind Pro API")
-    print(f"URL: http://127.0.0.1:{port}")
-    uvicorn.run("api_app:app", host="127.0.0.1", port=port, reload=False)
+    print(f"URL: http://{host}:{port}")
+    uvicorn.run("api_app:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

@@ -80,6 +80,14 @@ npm run dev
 
 ---
 
+## Docker
+
+Фронтенд собирается в standalone-образ (`output: "standalone"` в `next.config.ts`) и запускается в составе общего `docker-compose` из корня проекта — отдельно поднимать не нужно. Подробности в корневом `README.md` (раздел «Запуск через Docker»).
+
+В Docker `BONCHMIND_API_URL` задаётся на этапе сборки (build arg), потому что Next вычисляет rewrites из `next.config.ts` во время `next build`. По умолчанию `http://backend:8000` — имя сервиса backend в compose.
+
+---
+
 ## Аутентификация
 
 Frontend использует FastAPI-сессию через HttpOnly cookie.

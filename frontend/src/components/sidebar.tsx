@@ -1,4 +1,4 @@
-import { BookOpen, FileText, MessageSquareText, Settings, ShieldCheck, Upload } from "lucide-react";
+import { BookOpen, FileText, MessageSquareText, Upload } from "lucide-react";
 import type { MaterialInfo } from "@/lib/api";
 import type { WorkspaceSection } from "@/components/workspace-sections";
 
@@ -12,28 +12,19 @@ const navItems = [
   { key: "assistant", label: "Ассистент", icon: MessageSquareText },
   { key: "summary", label: "Конспект", icon: FileText },
   { key: "materials", label: "Материалы", icon: BookOpen },
-  { key: "quality", label: "Проверка качества", icon: ShieldCheck },
-  { key: "settings", label: "Настройки", icon: Settings },
 ];
 
 function getMaterialBadge(label: string) {
-  if (label === "ready") {
+  if (label === "ready" || label === "plain_text") {
     return {
       className: "bm-chip bm-chip-ready",
-      text: "готов",
-    };
-  }
-
-  if (label === "plain_text") {
-    return {
-      className: "bm-chip bm-chip-plain",
-      text: "текст",
+      text: "Готов",
     };
   }
 
   return {
     className: "bm-chip bm-chip-limited",
-    text: "ограничен",
+    text: "Требует проверки",
   };
 }
 

@@ -199,6 +199,53 @@ export class EmailConflictError extends Error {
   }
 }
 
+/**
+ * Raised by auth helpers when the backend rejects the payload with 422
+ * (Pydantic validation) or another structured 4xx. The message is the
+ * human-readable detail extracted from the response body so the form can
+ * tell the user exactly what's wrong (e.g. ".local" addresses are reserved)
+ * instead of a generic "try again".
+ */
+export class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
+type FastApiDetailItem = { msg?: string; loc?: (string | number)[] };
+
+async function extractDetailMessage(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.clone().json()) as { detail?: unknown };
+    const detail = body.detail;
+
+    if (typeof detail === "string") {
+      return detail;
+    }
+
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((item) => {
+          if (item && typeof item === "object") {
+            const typed = item as FastApiDetailItem;
+            return typeof typed.msg === "string" ? typed.msg : null;
+          }
+          return null;
+        })
+        .filter((msg): msg is string => Boolean(msg));
+
+      if (messages.length > 0) {
+        return messages.join(" ");
+      }
+    }
+  } catch {
+    // body wasn't JSON — fall through
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Auth wire types — mirror of ``src/auth_models.py``
 // ---------------------------------------------------------------------------
@@ -440,6 +487,10 @@ export async function registerUser(payload: RegisterPayload): Promise<UserOut> {
   if (response.status === 409) {
     throw new EmailConflictError();
   }
+  if (response.status === 422 || response.status === 400) {
+    const detail = await extractDetailMessage(response);
+    throw new ValidationError(detail ?? "Проверьте поля формы и попробуйте ещё раз.");
+  }
   if (!response.ok) {
     throw new Error(`Register failed: ${response.status}`);
   }
@@ -468,6 +519,10 @@ export async function loginUser(payload: LoginPayload): Promise<UserOut> {
 
   if (response.status === 401) {
     throw new InvalidCredentialsError();
+  }
+  if (response.status === 422 || response.status === 400) {
+    const detail = await extractDetailMessage(response);
+    throw new ValidationError(detail ?? "Проверьте поля формы и попробуйте ещё раз.");
   }
   if (!response.ok) {
     throw new Error(`Login failed: ${response.status}`);

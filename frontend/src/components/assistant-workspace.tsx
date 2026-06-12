@@ -13,36 +13,12 @@ type AssistantWorkspaceProps = {
   materials: MaterialInfo[];
 };
 
-const answerModes = ["Обычный", "Кратко", "Подробно", "Только цитаты"];
+const answerModes = ["Обычный", "Кратко", "Только цитаты"];
 const ASSISTANT_PREFERENCES_KEY = "bonchmind-assistant-preferences";
 const quickPrompts = [
-  "Объясни простыми словами ключевую идею раздела.",
-  "Сделай краткий ответ по теме в 3-4 пунктах.",
-  "Приведи только подтверждающие цитаты из материала.",
-  "Сравни два важных понятия из текущего материала.",
-];
-const studyScenarios = [
-  {
-    title: "Понять тему",
-    description: "Когда нужно быстро врубиться в смысл и не утонуть в формулировках учебника.",
-    prompt: "Объясни тему простыми словами, потом выдели 3 ключевые идеи и 1 типичную ошибку в понимании.",
-  },
-  {
-    title: "Повторить перед занятием",
-    description: "Сжать материал до опорных пунктов и быстро пробежать глазами перед парой или созвоном.",
-    prompt: "Сделай краткое повторение темы: 5 опорных пунктов, 3 термина и 1 короткий вывод.",
-  },
-  {
-    title: "Самопроверка",
-    description: "Не оценивать вместо преподавателя, а помочь самому понять, что ты реально помнишь.",
-    prompt:
-      "Сделай режим самопроверки по теме: задай 5 вопросов по материалу по одному, не ставь оценку, а после каждого моего ответа коротко скажи, чего не хватает и на что обратить внимание.",
-  },
-  {
-    title: "Подготовка по цитатам",
-    description: "Когда важно держаться строго за текст и не подмешивать лишние интерпретации.",
-    prompt: "Собери по теме ключевые цитаты и коротко подпиши, какую мысль каждая из них подтверждает.",
-  },
+  "Объясни простыми словами ключевую идею.",
+  "Сделай краткий ответ в 3-4 пунктах.",
+  "Приведи подтверждающие цитаты из материала.",
 ];
 
 type Notice = {
@@ -169,7 +145,7 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
         <div className="max-w-3xl">
           <h1 className="text-2xl font-bold tracking-tight text-white">Ассистент</h1>
           <p className="mt-2 text-sm leading-6 text-muted">
-            Задавайте вопросы по своим материалам. Уточняйте короткими follow-up — так ответы заметно сильнее.
+            Задайте вопрос по загруженным материалам — ассистент ответит с опорой на источники.
           </p>
         </div>
 
@@ -181,7 +157,7 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
             onChange={setSelectedFile}
           />
           <SegmentedControl
-            label="Тип ответа"
+            label="Стиль ответа"
             options={answerModes}
             value={answerMode}
             onChange={setAnswerMode}
@@ -220,22 +196,6 @@ export function AssistantWorkspace({ materials }: AssistantWorkspaceProps) {
           </div>
 
           <div ref={historyViewportRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2 assistant-scroll">
-            {history.length === 0 ? (
-              <div className="grid gap-3 lg:grid-cols-2">
-                {studyScenarios.map((item) => (
-                  <button
-                    key={item.title}
-                    type="button"
-                    onClick={() => setMessage(item.prompt)}
-                    className="rounded-xl border border-white/10 bg-[#0f1319] p-4 text-left transition hover:border-white/20 hover:bg-[#131923] hover:shadow-[0_12px_24px_rgba(0,0,0,0.12)]"
-                  >
-                    <div className="text-sm font-semibold text-white">{item.title}</div>
-                    <div className="mt-3 text-sm leading-6 text-muted">{item.description}</div>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
             {visibleHistory.map((item, index) => (
               <div
                 key={`${item.role}-${index}`}

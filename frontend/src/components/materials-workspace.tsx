@@ -48,23 +48,16 @@ const idleProgress: MaterialProgressResponse = {
 };
 
 function getMaterialBadge(label: string) {
-  if (label === "ready") {
+  if (label === "ready" || label === "plain_text") {
     return {
       className: "bm-chip bm-chip-ready",
-      text: "готов",
-    };
-  }
-
-  if (label === "plain_text") {
-    return {
-      className: "bm-chip bm-chip-plain",
-      text: "сплошной текст",
+      text: "Готов",
     };
   }
 
   return {
     className: "bm-chip bm-chip-limited",
-      text: "ограничен",
+    text: "Требует проверки",
   };
 }
 

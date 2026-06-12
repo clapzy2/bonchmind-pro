@@ -8,6 +8,7 @@ import type { MaterialInfo, SummaryResponse, TraceChunkGroup } from "@/lib/api";
 import { exportSummaryDocx, generateSummary } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { Markdown } from "@/components/markdown";
 import { RunDiagnostics, buildSummaryQualitySignals } from "@/components/run-diagnostics";
 import { UploadInline } from "@/components/upload-inline";
 import { useMaterialOperations } from "@/lib/use-material-operations";
@@ -340,9 +341,9 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
               BonchMind собирает источники и пишет конспект...
             </div>
           ) : (
-            <pre className="max-h-[560px] overflow-auto whitespace-pre-wrap rounded-xl border border-white/10 bg-[#0d1117] p-5 font-sans text-sm leading-7 text-slate-200">
-              {result?.text}
-            </pre>
+            <div className="max-h-[560px] overflow-auto rounded-xl border border-white/10 bg-[#0d1117] p-5">
+              <Markdown>{result?.text ?? ""}</Markdown>
+            </div>
           )}
         </section>
       ) : null}

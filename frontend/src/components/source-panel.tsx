@@ -1,9 +1,9 @@
 "use client";
 
-import { BookOpenText, FileSearch, MessageSquareQuote, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import { BookOpenText, FileSearch, MessageSquareQuote, Sparkles } from "lucide-react";
 
 import type { SummaryResponse, SystemStatus, TraceChunk, TraceChunkGroup } from "@/lib/api";
-import type { WorkspaceSection } from "@/components/workspace-sections";
+import type { WorkspaceSection } from "@/lib/workspace-section";
 
 type SourcePanelProps = {
   activeSection: WorkspaceSection;
@@ -56,18 +56,6 @@ const panelCopy: Record<WorkspaceSection, { eyebrow: string; title: string; body
     title: "Состояние библиотеки",
     body: "Здесь важны готовность материалов и удобство навигации по ним.",
     icon: BookOpenText,
-  },
-  quality: {
-    eyebrow: "Качество",
-    title: "Назначение экрана",
-    body: "Этот раздел нужен для проверки силы ответа, покрытия и слабых мест генерации.",
-    icon: ShieldCheck,
-  },
-  settings: {
-    eyebrow: "Настройки",
-    title: "Системный слой",
-    body: "Тут будут жить продуктовые и технические настройки станции.",
-    icon: Settings2,
   },
 };
 
@@ -143,49 +131,12 @@ export function SourcePanel({ activeSection, status, lastRun }: SourcePanelProps
               </p>
             </div>
           </>
-        ) : activeSection === "materials" ? (
-          <>
-            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
-              <div className="text-sm font-semibold text-white">Материалов в базе</div>
-              <div className="mt-3 text-2xl font-bold text-white">{status.total_books}</div>
-              <p className="mt-2 text-sm leading-6 muted">Это общее число источников, которые уже доступны системе.</p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
-              <div className="text-sm font-semibold text-white">Фрагментов готово</div>
-              <div className="mt-3 text-2xl font-bold text-white">{status.total_chunks}</div>
-              <p className="mt-2 text-sm leading-6 muted">Эти куски текста уже можно использовать для поиска, конспектов и диалога.</p>
-            </div>
-          </>
-        ) : activeSection === "quality" ? (
-          <>
-            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
-              <div className="text-sm font-semibold text-white">Что делает этот экран</div>
-              <p className="mt-3 text-sm leading-6 muted">
-                Он нужен не обычному пользователю для каждого действия, а тебе как владельцу продукта для проверки надежности ответа.
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
-              <div className="text-sm font-semibold text-white">Когда сюда идти</div>
-              <p className="mt-3 text-sm leading-6 muted">
-                Когда ответ кажется слабым, слишком общим, долго генерируется или опирается на малое число фрагментов.
-              </p>
-            </div>
-          </>
         ) : (
-          <>
-            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
-              <div className="text-sm font-semibold text-white">Сейчас</div>
-              <p className="mt-3 text-sm leading-6 muted">
-                Раздел настроек пока еще не полноценный: это будущая точка для моделей, режимов и системных переключателей.
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
-              <div className="text-sm font-semibold text-white">Дальше</div>
-              <p className="mt-3 text-sm leading-6 muted">
-                Сюда логично вынести только то, что реально полезно пользователю или тебе как администратору станции.
-              </p>
-            </div>
-          </>
+          <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+            <div className="text-sm font-semibold text-white">Материалов в базе</div>
+            <div className="mt-3 text-2xl font-bold text-white">{status.total_books}</div>
+            <p className="mt-2 text-sm leading-6 muted">Это общее число источников, которые уже доступны системе.</p>
+          </div>
         )}
       </div>
     </aside>

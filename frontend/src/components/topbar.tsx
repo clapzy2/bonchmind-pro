@@ -6,7 +6,7 @@ import { Activity, LogOut } from "lucide-react";
 
 import type { ApiHealth } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { WorkspaceSection } from "@/components/workspace-sections";
+import type { WorkspaceSection } from "@/lib/workspace-section";
 
 type TopbarProps = {
   activeSection: WorkspaceSection;
@@ -25,14 +25,6 @@ const sectionTitles: Record<WorkspaceSection, { label: string; subtitle: string 
   materials: {
     label: "Библиотека материалов",
     subtitle: "Живая структура базы знаний",
-  },
-  quality: {
-    label: "Проверка качества",
-    subtitle: "Надежность и покрытие",
-  },
-  settings: {
-    label: "Настройки станции",
-    subtitle: "Системный слой",
   },
 };
 

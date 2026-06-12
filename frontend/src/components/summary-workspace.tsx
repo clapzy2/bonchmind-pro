@@ -8,6 +8,7 @@ import type { MaterialInfo, SummaryResponse, TraceChunkGroup } from "@/lib/api";
 import { exportSummaryDocx, generateSummary } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { RunDiagnostics, buildSummaryQualitySignals } from "@/components/run-diagnostics";
 import { UploadInline } from "@/components/upload-inline";
 import { useMaterialOperations } from "@/lib/use-material-operations";
 
@@ -339,6 +340,14 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
             </pre>
           )}
         </section>
+      ) : null}
+
+      {result && !isLoading ? (
+        <RunDiagnostics
+          title="Диагностика запуска"
+          {...buildSummaryQualitySignals(result)}
+          diagnostics={result.diagnostics}
+        />
       ) : null}
 
       {showSources && plannedGroups.length > 0 ? (

@@ -9,8 +9,8 @@ type SidebarProps = {
 };
 
 const navItems = [
-  { key: "summary", label: "Конспект", icon: FileText },
   { key: "assistant", label: "Ассистент", icon: MessageSquareText },
+  { key: "summary", label: "Конспект", icon: FileText },
   { key: "materials", label: "Материалы", icon: BookOpen },
   { key: "quality", label: "Проверка качества", icon: ShieldCheck },
   { key: "settings", label: "Настройки", icon: Settings },
@@ -79,20 +79,17 @@ export function Sidebar({ activeSection, materials, onSectionChange }: SidebarPr
               Backend доступен, но материалы пока не найдены.
             </div>
           ) : (
-            materials.slice(0, 4).map((material) => (
-              <div className="rounded-lg border border-white/6 bg-[rgba(255,255,255,0.025)] p-3" key={material.name}>
-                <div className="truncate text-sm font-medium">{material.name}</div>
-                <div className="mt-1 flex items-center justify-between gap-3 text-xs">
-                  <span className="muted">{material.sections_count} разделов</span>
-                  {(() => {
-                    const badge = getMaterialBadge(material.quality_label);
-                    return (
-                      <span className={badge.className}>{badge.text}</span>
-                    );
-                  })()}
+            materials.slice(0, 4).map((material) => {
+              const badge = getMaterialBadge(material.quality_label);
+              return (
+                <div className="rounded-lg border border-white/6 bg-[rgba(255,255,255,0.025)] p-3" key={material.name}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 truncate text-sm font-medium">{material.name}</div>
+                    <span className={badge.className}>{badge.text}</span>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

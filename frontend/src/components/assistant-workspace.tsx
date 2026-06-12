@@ -8,6 +8,7 @@ import type { ChatMessage, ChatResponse, MaterialInfo } from "@/lib/api";
 import { sendChatMessage } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { RunDiagnostics, buildChatQualitySignals } from "@/components/run-diagnostics";
 import { UploadInline } from "@/components/upload-inline";
 import { useMaterialOperations } from "@/lib/use-material-operations";
 
@@ -338,6 +339,18 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
               ))}
             </div>
           </details>
+        ) : null}
+
+        {lastResponse ? (
+          <RunDiagnostics
+            title="Диагностика ответа"
+            meta={[
+              `Статус: ${lastResponse.trace?.status || "н/д"}`,
+              `Источников: ${lastResponse.sources?.length ?? 0}`,
+            ]}
+            {...buildChatQualitySignals(lastResponse)}
+            diagnostics={lastResponse.diagnostics}
+          />
         ) : null}
       </section>
     </div>

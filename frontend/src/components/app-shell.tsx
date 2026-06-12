@@ -7,10 +7,9 @@ import { Sidebar } from "@/components/sidebar";
 import { SourcePanel } from "@/components/source-panel";
 import { AssistantWorkspace } from "@/components/assistant-workspace";
 import { MaterialsWorkspace } from "@/components/materials-workspace";
-import { QualityWorkspace } from "@/components/quality-workspace";
 import { SummaryWorkspace } from "@/components/summary-workspace";
 import { Topbar } from "@/components/topbar";
-import { WorkspaceSectionView, type WorkspaceSection } from "@/components/workspace-sections";
+import type { WorkspaceSection } from "@/lib/workspace-section";
 
 type AppShellProps = {
   health: ApiHealth;
@@ -19,12 +18,12 @@ type AppShellProps = {
 };
 
 const ACTIVE_SECTION_KEY = "bonchmind-active-section";
+// Stale localStorage values for sections removed in Stage 7d ("quality",
+// "settings") fail this check and fall back to the default "assistant".
 const VALID_SECTIONS: readonly WorkspaceSection[] = [
   "summary",
   "assistant",
   "materials",
-  "quality",
-  "settings",
 ];
 
 function isWorkspaceSection(value: unknown): value is WorkspaceSection {
@@ -106,17 +105,8 @@ export function AppShell({ health, materials, status }: AppShellProps) {
             />
           ) : activeSection === "assistant" ? (
             <AssistantWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
-          ) : activeSection === "materials" ? (
-            <MaterialsWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
-          ) : activeSection === "quality" ? (
-            <QualityWorkspace lastRun={lastRun} />
           ) : (
-            <WorkspaceSectionView
-              activeSection={activeSection}
-              lastRun={lastRun}
-              materials={materialsState}
-              status={statusState}
-            />
+            <MaterialsWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
           )}
         </div>
       </div>

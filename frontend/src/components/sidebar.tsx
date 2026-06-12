@@ -1,6 +1,6 @@
 import { BookOpen, FileText, MessageSquareText, Upload } from "lucide-react";
 import type { MaterialInfo } from "@/lib/api";
-import type { WorkspaceSection } from "@/components/workspace-sections";
+import type { WorkspaceSection } from "@/lib/workspace-section";
 
 type SidebarProps = {
   activeSection: WorkspaceSection;

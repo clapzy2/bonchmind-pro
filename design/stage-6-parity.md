@@ -68,10 +68,17 @@ core reason Gradio has to go before they bite:
 Keeping Gradio means keeping a back-door into `DEFAULT_WORKSPACE_ID`
 that is *not* covered by the Stage 3+ test suite.
 
-## 5. Conclusion for the rest of Stage 6
+## 5. Stage 6 status
 
-- **6b (close gaps)** — nothing to do. The §3 known-gaps are recorded and explicitly out of scope per user decision.
-- **6c (deprecation notice)** — proceed: print a `DeprecationWarning` on `python main.py` start-up, update `README.md` and `frontend/README.md`.
-- **6d (remove Gradio)** — proceed: delete `main.py`, drop the `gradio` dependency from `requirements.txt`, remove all `_get_kb` / `_get_llm` / `_llm` / `_kb` legacy plumbing in `app_services.generate_summary_service` that exists only to feed Gradio's `on_generate_summary`.
-- **6e (drop `DEFAULT_WORKSPACE_ID`)** — proceed in mode (a): remove `config.DEFAULT_WORKSPACE_ID`; replace the kwarg defaults in `summary_engine.py` / `knowledge_base.py` with a required positional `workspace_id`; update any test that still calls KB without an explicit workspace.
-- **6f (cleanup docs)** — close the Stage 3 backlog items "Drop `DEFAULT_WORKSPACE_ID`" and "Workspace-aware `summary_engine.py`" formally; update READMEs.
+All sub-steps from §1–§2 are closed. Recorded for the final history:
+
+- **6b (close gaps)** — no-op. The §3 known-gaps were explicitly out of scope per user decision.
+- ~~**6c (deprecation notice)**~~ **Done** (`677c3c27`). `python main.py` printed a deprecation banner + emitted `DeprecationWarning`; READMEs flagged the entrypoint as legacy.
+- ~~**6d (remove Gradio)**~~ **Done** (`6ea0ce8a` + `5d3392f5` follow-up). `main.py`, `run.py`, the `gradio>=4.0.0` requirement, and the `_get_kb` / `_get_llm` / `main._llm` / `main._kb` bridge inside `app_services.generate_summary_service` are gone. The no-topic / no-section fallback that used to live in `main.on_generate_summary` moved into `summary_engine.py` as `generate_full_file_summary`. CI flushed out a transitive-only `python-multipart` dependency (used to ship via Gradio's tree, needed by FastAPI's `UploadFile`) — pinned explicitly in `requirements.txt`.
+- ~~**6e (drop `DEFAULT_WORKSPACE_ID`)**~~ **Done** (`632f990a`) in mode (a). `config.DEFAULT_WORKSPACE_ID` deleted; every public `KnowledgeBase` method (16) and every `summary_engine` strategy / helper (8) now declares `workspace_id` as keyword-only via `*,` with no default. Five internal positional callers in `knowledge_base.py` switched to kwarg form. `ingest.py` (dead) deleted; `eval/run_eval.py` got a `--workspace-id` CLI flag.
+- ~~**6f (cleanup docs)**~~ **Done** (this commit). Stage 3 backlog items "Drop `DEFAULT_WORKSPACE_ID`" and "Workspace-aware `summary_engine.py`" closed in `design/multi-user-architecture.md`. New "Stage 6 — drop Gradio + `DEFAULT_WORKSPACE_ID` (done)" section added. READMEs verified to contain no remaining instructions for `python main.py` / `python run.py`.
+
+The known-gaps in §3 stay recorded as low-priority follow-up tickets:
+multi-file upload, diagnostics JSON export button, real Settings tab,
+superuser diagnostics UI, light theme. None of them block any current
+workflow; each opens its own ticket when prioritised.

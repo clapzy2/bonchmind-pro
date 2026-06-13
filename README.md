@@ -13,15 +13,7 @@
 
 ## Скриншоты
 
-> Файлы складываются в [`screenshots/`](screenshots/) (см. shot-list там). До добавления PNG ссылки ниже будут пустыми.
-
-| Конспект | Ассистент |
-|----------|-----------|
-| ![Конспект](screenshots/03-summary.png) | ![Ассистент](screenshots/04-assistant.png) |
-
-| Библиотека | Вход |
-|------------|------|
-| ![Библиотека](screenshots/02-materials.png) | ![Вход](screenshots/01-login.png) |
+Скриншоты интерфейса будут добавлены **отдельным follow-up PR** после финального smoke. Список нужных кадров (shot-list с именами файлов) — в [`screenshots/README.md`](screenshots/README.md).
 
 ---
 

@@ -134,6 +134,39 @@ class AuditLogResponse(BaseModel):
     events: list[AuditEventOut] = Field(default_factory=list)
 
 
+class AdminUserOut(BaseModel):
+    """A user as shown in the superuser user-management table (Stage 13)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    display_name: str
+    is_active: bool
+    is_superuser: bool
+    # Computed (not stored): the configured ROOT_ADMIN_EMAIL is immune to
+    # demote/ban. The UI disables its row actions.
+    is_protected: bool = False
+    plan: str
+    created_at: datetime
+
+
+class AdminUsersResponse(BaseModel):
+    users: list[AdminUserOut] = Field(default_factory=list)
+
+
+class AdminRoleUpdate(BaseModel):
+    """Promote/demote a user (set ``is_superuser``)."""
+
+    is_superuser: bool
+
+
+class AdminActiveUpdate(BaseModel):
+    """Ban/unban a user (set ``is_active``)."""
+
+    is_active: bool
+
+
 class AdminStats(BaseModel):
     """System-wide counts for the admin overview (Stage 9b).
 

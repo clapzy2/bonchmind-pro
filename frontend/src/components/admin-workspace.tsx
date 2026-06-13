@@ -6,22 +6,27 @@ import { DatabaseZap, RefreshCw, ShieldCheck } from "lucide-react";
 
 import {
   getAdminStats,
+  getAdminUsers,
   getAuditEvents,
   getLatestDiagnostics,
   reconcileDatabase,
+  setUserActive,
+  setUserRole,
   UnauthorizedError,
   type AdminStats,
+  type AdminUser,
   type AuditEvent,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 import { handleAuthError } from "@/lib/handle-auth-error";
 import { RunDiagnostics } from "@/components/run-diagnostics";
 
 /**
- * Superuser-only admin screen (Stage 9b). Read-only overview of the instance:
- * system-wide counts, the recent audit log, and the latest run diagnostics
- * (reusing the collapsible ``RunDiagnostics`` panel). No mutations here — role
- * management, bans and rate-limit tuning are deliberately out of scope; the
- * first superuser is promoted via the DB directly (see README).
+ * Superuser-only admin screen (Stage 9b; user-management added in Stage 13).
+ * Instance-wide counts, the recent audit log, the latest run diagnostics
+ * (reusing ``RunDiagnostics``), the "Сверить базу" reconcile, and the
+ * **Пользователи** table (promote/demote + ban/unban, with the self-row
+ * disabled). The first superuser is still bootstrapped via the DB (see README).
  *
  * The backend gates every ``/api/admin/*`` call with ``require_superuser``, so
  * this component is the convenience layer, not the security boundary: a 403
@@ -73,9 +78,13 @@ type AdminWorkspaceProps = {
 
 export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
   const router = useRouter();
+  const { user: me } = useAuth();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [diagnostics, setDiagnostics] = useState("");
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [userBusy, setUserBusy] = useState<string | null>(null);
+  const [userNotice, setUserNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reconciling, setReconciling] = useState(false);
@@ -85,15 +94,17 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
     setLoading(true);
     setError(null);
     try {
-      const [nextStats, nextEvents, nextDiag] = await Promise.all([
+      const [nextStats, nextEvents, nextDiag, nextUsers] = await Promise.all([
         getAdminStats(),
         getAuditEvents(100),
         // Diagnostics are nice-to-have — never fail the whole screen over them.
         getLatestDiagnostics().catch(() => ""),
+        getAdminUsers(),
       ]);
       setStats(nextStats);
       setEvents(nextEvents);
       setDiagnostics(nextDiag);
+      setUsers(nextUsers);
     } catch (err) {
       if (handleAuthError(err, router)) {
         return;
@@ -145,6 +156,60 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
       setReconciling(false);
     }
   }, [load, onReconciled, router]);
+
+  const refreshUsers = useCallback(async () => {
+    try {
+      setUsers(await getAdminUsers());
+    } catch {
+      // non-fatal; the table just keeps its previous state
+    }
+  }, []);
+
+  const toggleRole = useCallback(
+    async (target: AdminUser) => {
+      const makeAdmin = !target.is_superuser;
+      if (!makeAdmin && !window.confirm(`Снять права администратора у ${target.email}?`)) {
+        return;
+      }
+      setUserNotice(null);
+      setUserBusy(target.id);
+      try {
+        await setUserRole(target.id, makeAdmin);
+        await refreshUsers();
+      } catch (err) {
+        if (handleAuthError(err, router)) {
+          return;
+        }
+        setUserNotice(`Не удалось изменить роль пользователя ${target.email}.`);
+      } finally {
+        setUserBusy(null);
+      }
+    },
+    [refreshUsers, router],
+  );
+
+  const toggleActive = useCallback(
+    async (target: AdminUser) => {
+      const activate = !target.is_active;
+      if (!activate && !window.confirm(`Заблокировать ${target.email}? Он будет немедленно отключён.`)) {
+        return;
+      }
+      setUserNotice(null);
+      setUserBusy(target.id);
+      try {
+        await setUserActive(target.id, activate);
+        await refreshUsers();
+      } catch (err) {
+        if (handleAuthError(err, router)) {
+          return;
+        }
+        setUserNotice(`Не удалось изменить статус пользователя ${target.email}.`);
+      } finally {
+        setUserBusy(null);
+      }
+    },
+    [refreshUsers, router],
+  );
 
   const statCards = stats
     ? [
@@ -223,7 +288,7 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
             {loading ? "Загружаю события…" : "Событий пока нет."}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-h-[360px] overflow-auto assistant-scroll">
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide muted">
@@ -262,6 +327,88 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="bm-surface rounded-xl p-4 shadow-soft">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white">Пользователи</h2>
+          <span className="text-xs muted">{users.length}</span>
+        </div>
+
+        {userNotice ? (
+          <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+            {userNotice}
+          </div>
+        ) : null}
+
+        {users.length === 0 ? (
+          <div className="rounded-md border border-dashed border-[var(--line)] p-4 text-sm muted">
+            {loading ? "Загружаю пользователей…" : "Пользователей нет."}
+          </div>
+        ) : (
+          <div className="max-h-[420px] overflow-auto assistant-scroll">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide muted">
+                  <th className="px-2 py-2 font-semibold">Email</th>
+                  <th className="px-2 py-2 font-semibold">Тариф</th>
+                  <th className="px-2 py-2 font-semibold">Статус</th>
+                  <th className="px-2 py-2 font-semibold">Роль</th>
+                  <th className="px-2 py-2 text-right font-semibold">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => {
+                  const isSelf = u.id === me?.id;
+                  const busy = userBusy === u.id;
+                  // Self and the configured root admin can't be modified here.
+                  const locked = isSelf || u.is_protected;
+                  return (
+                    <tr key={u.id} className="border-t border-[var(--line)]">
+                      <td className="px-2 py-2 text-slate-200">
+                        {u.email}
+                        {isSelf ? (
+                          <span className="ml-2 text-xs muted">(это вы)</span>
+                        ) : u.is_protected ? (
+                          <span className="ml-2 text-xs text-emerald-300">(защищён)</span>
+                        ) : null}
+                      </td>
+                      <td className="px-2 py-2 text-slate-300">{u.plan}</td>
+                      <td className="px-2 py-2">
+                        <span className={`bm-chip ${u.is_active ? "bm-chip-ready" : "bm-chip-limited"}`}>
+                          {u.is_active ? "Активен" : "Заблокирован"}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2 text-slate-300">{u.is_superuser ? "Админ" : "Пользователь"}</td>
+                      <td className="px-2 py-2">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleRole(u)}
+                            disabled={locked || busy}
+                            className="bm-button-secondary h-8 px-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {u.is_superuser ? "Снять админа" : "Сделать админом"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleActive(u)}
+                            disabled={locked || busy}
+                            className={`h-8 rounded-md px-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${
+                              u.is_active ? "bm-button-danger text-red-100" : "bm-button-secondary"
+                            }`}
+                          >
+                            {u.is_active ? "Заблокировать" : "Разблокировать"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

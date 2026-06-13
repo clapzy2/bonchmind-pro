@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 import config
@@ -51,7 +52,7 @@ def _build_user_out(db: Session, user: User) -> UserOut:
     response_model=AuthResponse,
     status_code=status.HTTP_201_CREATED,
 )
-@limiter.limit(config.RATE_LIMIT_REGISTER)
+@limiter.limit(config.RATE_LIMIT_REGISTER, key_func=get_remote_address)
 def register(
     payload: UserCreate,
     request: Request,
@@ -65,7 +66,7 @@ def register(
 
 
 @router.post("/login", response_model=AuthResponse)
-@limiter.limit(config.RATE_LIMIT_LOGIN)
+@limiter.limit(config.RATE_LIMIT_LOGIN, key_func=get_remote_address)
 def login(
     payload: UserLogin,
     request: Request,

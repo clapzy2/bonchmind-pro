@@ -23,6 +23,11 @@ ACTION_UPLOAD = "upload"
 ACTION_DELETE = "delete"
 ACTION_REINDEX = "reindex"
 ACTION_RECONCILE = "reconcile"
+# Superuser user-management (Stage 13).
+ACTION_PROMOTE = "promote"
+ACTION_DEMOTE = "demote"
+ACTION_BAN = "ban"
+ACTION_UNBAN = "unban"
 
 
 def record(

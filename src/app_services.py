@@ -25,6 +25,7 @@ without going through the Gradio entrypoint (Stage 6d).
 import os
 from threading import Lock, Thread
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, select
 
 import config
@@ -32,6 +33,8 @@ from src import document_service, knowledge_base, quota, runtime
 from src import summary_engine
 from src.api_models import (
     AdminStats,
+    AdminUserOut,
+    AdminUsersResponse,
     BillingMeResponse,
     ReconcileResponse,
     ChatMessage,
@@ -1096,6 +1099,113 @@ def get_latest_diagnostics_json():
 def get_billing_me(workspace_id: str) -> BillingMeResponse:
     """Current plan + per-action usage for the caller's workspace (Stage 12)."""
     return BillingMeResponse(**quota.usage_summary(workspace_id))
+
+
+def _is_protected_admin(email: str) -> bool:
+    """The configured root admin (Stage 13) — immune to demote/ban via the API."""
+    root = config.ROOT_ADMIN_EMAIL
+    return bool(root) and (email or "").strip().lower() == root
+
+
+def _admin_user_out(user) -> AdminUserOut:
+    return AdminUserOut(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        is_protected=_is_protected_admin(user.email),
+        plan=user.plan,
+        created_at=user.created_at,
+    )
+
+
+def list_admin_users() -> AdminUsersResponse:
+    """All users for the superuser user-management table (Stage 13)."""
+    from src.db_models import User
+
+    db = SessionLocal()
+    try:
+        users = db.execute(select(User).order_by(User.created_at.asc())).scalars().all()
+        return AdminUsersResponse(users=[_admin_user_out(u) for u in users])
+    finally:
+        db.close()
+
+
+def _active_superuser_count(db) -> int:
+    from src.db_models import User
+
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.is_superuser.is_(True), User.is_active.is_(True))
+        )
+        or 0
+    )
+
+
+def _load_admin_target(db, actor_id: str, target_id: str):
+    """Resolve the target user for an admin action, enforcing the self-guard.
+
+    A superuser may manage *other* users only — never themselves (can't
+    self-ban / self-demote, which is the lockout footgun).
+    """
+    from src.db_models import User
+
+    if target_id == actor_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="cannot_modify_self")
+    target = db.get(User, target_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+    return target
+
+
+def admin_set_user_role(*, actor_id: str, target_id: str, is_superuser: bool) -> AdminUserOut:
+    """Promote/demote a user. Guards: self (400) + last active superuser (400)."""
+    db = SessionLocal()
+    try:
+        target = _load_admin_target(db, actor_id, target_id)
+        # The configured root admin can't be demoted by anyone.
+        if _is_protected_admin(target.email) and not is_superuser:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="protected_admin")
+        # Don't demote the last active superuser — never leave the system without
+        # an admin (belt-and-braces on top of the self-guard).
+        if target.is_superuser and target.is_active and not is_superuser:
+            if _active_superuser_count(db) <= 1:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="last_superuser")
+        target.is_superuser = is_superuser
+        db.commit()
+        db.refresh(target)
+        return _admin_user_out(target)
+    finally:
+        db.close()
+
+
+def admin_set_user_active(*, actor_id: str, target_id: str, is_active: bool) -> AdminUserOut:
+    """Ban/unban a user. Guards: self (400) + last active superuser (400)."""
+    db = SessionLocal()
+    try:
+        target = _load_admin_target(db, actor_id, target_id)
+        # The configured root admin can't be banned by anyone.
+        if _is_protected_admin(target.email) and not is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="protected_admin")
+        # Don't ban the last active superuser.
+        if target.is_superuser and target.is_active and not is_active:
+            if _active_superuser_count(db) <= 1:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="last_superuser")
+        target.is_active = is_active
+        if not is_active:
+            # Revoke existing sessions so the old cookie can't resume after an
+            # un-ban — the user must log in fresh (Stage 13).
+            from datetime import datetime, timezone
+
+            target.tokens_valid_after = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(target)
+        return _admin_user_out(target)
+    finally:
+        db.close()
 
 
 def get_admin_stats() -> AdminStats:

@@ -53,6 +53,12 @@ class User(Base):
     # subject for a personal workspace; an org-owned workspace will resolve its
     # plan from the organization instead (see design/monetization-and-b2b.md).
     plan: Mapped[str] = mapped_column(String(16), nullable=False, default="free")
+    # Session revocation (Stage 13): JWTs whose ``iat`` predates this are
+    # rejected by ``get_current_user``. Stamped on ban so a banned account can't
+    # resume on its old cookie after being un-banned — it must log in fresh.
+    tokens_valid_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Reserved for a future email-verification flow (not implemented in Stage 1).
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)

@@ -107,6 +107,12 @@ AUTH_COOKIE_NAME = "bonchmind_auth"
 # Set to True only when serving the frontend over HTTPS in production.
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
 
+# Protected "root" admin (Stage 13). The user whose email matches this can
+# never be demoted or banned through the admin API — not even by another
+# superuser. Set it to your own login email. Empty (default) = no protected
+# root. It does not auto-grant superuser; promote the account once as usual.
+ROOT_ADMIN_EMAIL = os.getenv("ROOT_ADMIN_EMAIL", "").strip().lower()
+
 # --- Rate limiting (Stage 9a) ---------------------------------------------
 # Per-IP limits applied via slowapi. Tunable through env; strict on auth,
 # moderate on chat/upload. Disable entirely with RATE_LIMIT_ENABLED=false

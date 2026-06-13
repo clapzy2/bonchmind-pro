@@ -23,6 +23,9 @@ _TMP_DB_FD, _TMP_DB_PATH = tempfile.mkstemp(prefix="bonchmind_test_", suffix=".d
 os.close(_TMP_DB_FD)
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB_PATH}"
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-only-for-pytest")
+# Rate limiting off by default in tests so the suite isn't throttled; the
+# dedicated rate-limit test toggles ``limiter.enabled`` on for its scope.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 
 
 @pytest.fixture()

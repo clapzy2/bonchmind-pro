@@ -23,17 +23,24 @@ arbitrary ``workspace_id`` in the URL, the dependency would still return the
 authenticated user's own workspace.
 """
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+import config
 from src import app_services as services
+from src import audit_service
 from src import auth_service
 from src.auth_api import router as auth_router
 from src.auth_service import get_current_user, require_superuser
+from src.rate_limit import limiter
 from src.db import get_db
 from src.db_models import User
 from src.api_models import (
@@ -51,6 +58,21 @@ from src.api_models import (
 
 
 app = FastAPI(title="BonchMind Pro API", version="0.1.0")
+
+# Rate limiting (Stage 9a): register the shared limiter + 429 handler. Per-route
+# limits are applied with @limiter.limit on auth/chat/upload.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Stage 9a: warn loudly if a prod-like deployment (Postgres) serves the auth
+# cookie without the Secure flag. Stays quiet for local dev/CI on SQLite.
+if not config.AUTH_COOKIE_SECURE and config.DATABASE_URL.startswith("postgres"):
+    logging.getLogger("bonchmind.security").warning(
+        "AUTH_COOKIE_SECURE is false but DATABASE_URL looks like production "
+        "(Postgres). Set AUTH_COOKIE_SECURE=true when serving over HTTPS so the "
+        "auth cookie is not sent over plain HTTP."
+    )
+
 app.include_router(auth_router)
 
 
@@ -72,6 +94,42 @@ WorkspaceId = Annotated[str, Depends(get_current_workspace_id)]
 _ADMIN = [Depends(require_superuser)]
 
 
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else ""
+
+
+_MAX_UPLOAD_BYTES = getattr(config, "MAX_UPLOAD_BYTES", 50 * 1024 * 1024)
+
+
+async def _read_upload_within_limit(request: Request, file: UploadFile) -> bytes:
+    """Read an upload without letting a huge file OOM the server (Stage 9a).
+
+    Two layers: a fast Content-Length reject before touching the body, then a
+    streamed read with a hard cap so a missing/lying Content-Length still can't
+    buffer more than the limit. Oversized uploads raise 413; the per-file size
+    check in the service layer stays as defence-in-depth.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="file_too_large")
+        except ValueError:
+            pass  # malformed header — fall through to the streamed cap
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)  # 1 MB at a time
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="file_too_large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @app.get("/api/health")
 def health():
     """Public liveness probe — used by uptime monitoring."""
@@ -89,9 +147,11 @@ def materials(workspace_id: WorkspaceId):
 
 
 @app.post("/api/materials/upload", response_model=MaterialActionResponse)
+@limiter.limit(config.RATE_LIMIT_UPLOAD)
 async def material_upload(
     workspace_id: WorkspaceId,
     current_user: Annotated[User, Depends(get_current_user)],
+    request: Request,
     file: UploadFile = File(...),
 ):
     """Upload requires both ``workspace_id`` (where the file is indexed) and
@@ -99,10 +159,18 @@ async def material_upload(
     transitively derived from ``current_user`` via ``get_current_workspace_id``,
     but we keep ``current_user`` as a separate dependency so the owner id is
     explicit at the call site."""
-    content = await file.read()
-    return services.start_upload_material_service(
+    content = await _read_upload_within_limit(request, file)
+    result = services.start_upload_material_service(
         workspace_id, current_user.id, file.filename, content
     )
+    audit_service.record(
+        audit_service.ACTION_UPLOAD,
+        user_id=current_user.id,
+        workspace_id=workspace_id,
+        target=file.filename or "",
+        ip=_client_ip(request),
+    )
+    return result
 
 
 @app.get("/api/materials/progress", response_model=MaterialProgressResponse)
@@ -119,24 +187,62 @@ def material_sections(workspace_id: WorkspaceId, file_name: str):
 
 
 @app.post("/api/materials/reindex", response_model=MaterialActionResponse)
-def materials_reindex(workspace_id: WorkspaceId):
-    return services.start_reindex_material_service(workspace_id)
+def materials_reindex(
+    workspace_id: WorkspaceId,
+    current_user: Annotated[User, Depends(get_current_user)],
+    request: Request,
+):
+    result = services.start_reindex_material_service(workspace_id)
+    audit_service.record(
+        audit_service.ACTION_REINDEX,
+        user_id=current_user.id,
+        workspace_id=workspace_id,
+        target="*",
+        ip=_client_ip(request),
+    )
+    return result
 
 
 @app.post(
     "/api/materials/{file_name}/reindex",
     response_model=MaterialActionResponse,
 )
-def material_reindex(workspace_id: WorkspaceId, file_name: str):
-    return services.start_reindex_material_service(workspace_id, file_name=file_name)
+def material_reindex(
+    workspace_id: WorkspaceId,
+    current_user: Annotated[User, Depends(get_current_user)],
+    request: Request,
+    file_name: str,
+):
+    result = services.start_reindex_material_service(workspace_id, file_name=file_name)
+    audit_service.record(
+        audit_service.ACTION_REINDEX,
+        user_id=current_user.id,
+        workspace_id=workspace_id,
+        target=file_name,
+        ip=_client_ip(request),
+    )
+    return result
 
 
 @app.delete(
     "/api/materials/{file_name}",
     response_model=MaterialActionResponse,
 )
-def material_delete(workspace_id: WorkspaceId, file_name: str):
-    return services.start_delete_material_service(workspace_id, file_name)
+def material_delete(
+    workspace_id: WorkspaceId,
+    current_user: Annotated[User, Depends(get_current_user)],
+    request: Request,
+    file_name: str,
+):
+    result = services.start_delete_material_service(workspace_id, file_name)
+    audit_service.record(
+        audit_service.ACTION_DELETE,
+        user_id=current_user.id,
+        workspace_id=workspace_id,
+        target=file_name,
+        ip=_client_ip(request),
+    )
+    return result
 
 
 @app.post("/api/summaries", response_model=SummaryResponse)
@@ -145,8 +251,9 @@ def summaries(workspace_id: WorkspaceId, request: SummaryRequest):
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-def chat(workspace_id: WorkspaceId, request: ChatRequest):
-    return services.chat_service(workspace_id, request)
+@limiter.limit(config.RATE_LIMIT_CHAT)
+def chat(workspace_id: WorkspaceId, request: Request, payload: ChatRequest):
+    return services.chat_service(workspace_id, payload)
 
 
 @app.post("/api/exports/summary")

@@ -39,6 +39,8 @@ bcrypt>=4.0.0
 python-jose[cryptography]>=3.3.0
 # Postgres driver - used in production; local dev/CI run on SQLite
 psycopg[binary]>=3.1.0
+# Per-IP rate limiting on auth/chat/upload (Stage 9a)
+slowapi>=0.1.9
 
 rich>=13.0.0
 

@@ -171,15 +171,6 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
             {activeOperation === "upload" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Добавить материал
           </button>
-          <button
-            type="button"
-            onClick={() => operations.reindexAll()}
-            disabled={isRunning}
-            className="bm-button-secondary h-11 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {activeOperation === "reindex_library" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-            Пересобрать библиотеку
-          </button>
         </div>
 
         {(progress.active || progress.phase === "done" || progress.phase === "error" || progress.phase === "cancelled") ? (
@@ -204,10 +195,11 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
                   <button
                     type="button"
                     onClick={() => operations.cancel()}
-                    className="flex items-center gap-1 rounded-md border border-white/10 px-2.5 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+                    disabled={operations.cancelling}
+                    className="flex items-center gap-1 rounded-md border border-white/10 px-2.5 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <X className="h-3.5 w-3.5" />
-                    Отменить
+                    {operations.cancelling ? "Отменяю…" : "Отменить"}
                   </button>
                 ) : null}
                 <div className="text-lg font-bold text-white">{progress.progress}%</div>

@@ -349,7 +349,7 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
               </p>
             </div>
 
-            <UploadInline progress={upload.progress} notice={upload.notice} onCancel={upload.cancel} />
+            <UploadInline progress={upload.progress} notice={upload.notice} onCancel={upload.cancel} cancelling={upload.cancelling} />
 
             {notice ? (
               <div

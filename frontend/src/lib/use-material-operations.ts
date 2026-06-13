@@ -87,6 +87,9 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
   const [progress, setProgress] = useState<MaterialProgressResponse>(idleMaterialProgress);
   const [notice, setNotice] = useState<MaterialOperationNotice | null>(null);
   const [activeOperation, setActiveOperation] = useState<RunArgs["operation"] | null>(null);
+  // Immediate "cancel requested" flag for responsive UI — the real stop still
+  // happens at the next batch checkpoint on the backend.
+  const [cancelling, setCancelling] = useState(false);
   const pendingRef = useRef<{ onComplete?: (name: string) => void; materialName: string } | null>(null);
 
   const isRunning = activeOperation !== null;
@@ -155,11 +158,13 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
 
       pendingRef.current = null;
       setActiveOperation(null);
+      setCancelling(false);
     }
 
     finalize().catch(() => {
       pendingRef.current = null;
       setActiveOperation(null);
+      setCancelling(false);
     });
 
     return () => {
@@ -190,6 +195,7 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
   }, []);
 
   const cancel = useCallback(async () => {
+    setCancelling(true);
     setNotice({ tone: "info", text: "Отменяю операцию…" });
     try {
       await cancelMaterialOperation();
@@ -327,6 +333,7 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
     setNotice,
     isRunning,
     activeOperation,
+    cancelling,
     uploadFile,
     deleteFile,
     reindexFile,

@@ -621,6 +621,8 @@ export type AdminUser = {
   display_name: string;
   is_active: boolean;
   is_superuser: boolean;
+  /** Configured root admin — immune to demote/ban; the UI disables its row. */
+  is_protected: boolean;
   plan: string;
   created_at: string;
 };

@@ -365,11 +365,17 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
                 {users.map((u) => {
                   const isSelf = u.id === me?.id;
                   const busy = userBusy === u.id;
+                  // Self and the configured root admin can't be modified here.
+                  const locked = isSelf || u.is_protected;
                   return (
                     <tr key={u.id} className="border-t border-[var(--line)]">
                       <td className="px-2 py-2 text-slate-200">
                         {u.email}
-                        {isSelf ? <span className="ml-2 text-xs muted">(это вы)</span> : null}
+                        {isSelf ? (
+                          <span className="ml-2 text-xs muted">(это вы)</span>
+                        ) : u.is_protected ? (
+                          <span className="ml-2 text-xs text-emerald-300">(защищён)</span>
+                        ) : null}
                       </td>
                       <td className="px-2 py-2 text-slate-300">{u.plan}</td>
                       <td className="px-2 py-2">
@@ -383,7 +389,7 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
                           <button
                             type="button"
                             onClick={() => toggleRole(u)}
-                            disabled={isSelf || busy}
+                            disabled={locked || busy}
                             className="bm-button-secondary h-8 px-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {u.is_superuser ? "Снять админа" : "Сделать админом"}
@@ -391,7 +397,7 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
                           <button
                             type="button"
                             onClick={() => toggleActive(u)}
-                            disabled={isSelf || busy}
+                            disabled={locked || busy}
                             className={`h-8 rounded-md px-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${
                               u.is_active ? "bm-button-danger text-red-100" : "bm-button-secondary"
                             }`}

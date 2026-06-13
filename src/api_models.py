@@ -144,6 +144,9 @@ class AdminUserOut(BaseModel):
     display_name: str
     is_active: bool
     is_superuser: bool
+    # Computed (not stored): the configured ROOT_ADMIN_EMAIL is immune to
+    # demote/ban. The UI disables its row actions.
+    is_protected: bool = False
     plan: str
     created_at: datetime
 

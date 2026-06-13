@@ -240,3 +240,33 @@ def test_last_superuser_guard_blocks_demote_and_ban(superuser_client):
         app_services.admin_set_user_active(actor_id="someone-else", target_id=admin_id, is_active=False)
     assert ban.value.status_code == 400
     assert ban.value.detail == "last_superuser"
+
+
+def test_protected_root_admin_cannot_be_demoted_or_banned(superuser_client, monkeypatch):
+    """The configured ROOT_ADMIN_EMAIL is immune to demote/ban even from another
+    superuser — 'no one can touch the root'."""
+    import config
+
+    target = _seed_user("root@example.com")
+    monkeypatch.setattr(config, "ROOT_ADMIN_EMAIL", "root@example.com")
+    superuser_client.post(f"/api/admin/users/{target}/role", json={"is_superuser": True})
+
+    demote = superuser_client.post(f"/api/admin/users/{target}/role", json={"is_superuser": False})
+    assert demote.status_code == 400
+    assert demote.json()["detail"] == "protected_admin"
+
+    ban = superuser_client.post(f"/api/admin/users/{target}/active", json={"is_active": False})
+    assert ban.status_code == 400
+    assert ban.json()["detail"] == "protected_admin"
+
+
+def test_admin_users_marks_protected_root(superuser_client, monkeypatch):
+    import config
+
+    _seed_user("root@example.com")
+    monkeypatch.setattr(config, "ROOT_ADMIN_EMAIL", "root@example.com")
+
+    users = superuser_client.get("/api/admin/users").json()["users"]
+    by_email = {u["email"]: u for u in users}
+    assert by_email["root@example.com"]["is_protected"] is True
+    assert by_email["admin@example.com"]["is_protected"] is False

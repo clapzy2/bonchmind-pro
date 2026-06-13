@@ -199,6 +199,25 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
     };
   }, [activeOperation, progress, onSync]);
 
+  // Auto-dismiss a finished operation's progress panel + notice. The materials
+  // screen is a fixed-height flex column, so a lingering "done"/"cancelled"
+  // panel + notice stole vertical space and squeezed the list until the user
+  // reloaded. Clear it after a few seconds so the layout heals itself. Errors
+  // stay sticky (no auto-clear) so the user can actually read them.
+  useEffect(() => {
+    if (activeOperation !== null || batch !== null || progress.active) {
+      return;
+    }
+    if (progress.phase !== "done" && progress.phase !== "cancelled") {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setProgress(idleMaterialProgress);
+      setNotice(null);
+    }, 6000);
+    return () => window.clearTimeout(timer);
+  }, [activeOperation, batch, progress]);
+
   // Resume an in-flight job after F5 (Stage 9a upload-ux): probe the server's
   // per-workspace progress once on mount and reattach if something is active.
   // No onComplete after a reload (we can't recover the original callback) — the

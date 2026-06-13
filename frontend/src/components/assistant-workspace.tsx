@@ -235,6 +235,10 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
           setHistory((prev) => [...prev, { role: "assistant", content: streamed }]);
         }
         setStreamingAnswer(null);
+        setNotice({
+          tone: "info",
+          text: streamed ? "Генерация остановлена — показан частичный ответ." : "Генерация остановлена.",
+        });
         return;
       }
       if (handleAuthError(error, router)) return;

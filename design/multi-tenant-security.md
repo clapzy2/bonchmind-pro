@@ -133,16 +133,19 @@ A university NAT shares one public IP, so one noisy student would throttle the
 > charge a department until multi-tenant access is safe.
 
 1. **Stage 12 — plans / quotas / metering** ✅ (done).
-2. **Stage 13 — Multi-tenant security / B2B foundation:** centralized
-   `can(...)` authorization resolver, per-workspace roles
-   (`teacher`/`student`/`viewer`), per-user rate-limit, isolation hardening,
-   `is_active` enforced in `get_current_user`. Likely split into sub-stages.
-3. **Stage 14 — Org & courses:** `Organization` / `OrganizationMember` tables,
-   `Workspace.organization_id`, invite-by-code, active-workspace selection,
+2. **Stage 13 — Multi-tenant security / B2B foundation** ✅ (done): per-user
+   rate-limit, live-session ban enforcement, superuser user-management
+   (promote/demote/ban + protected root). The `can(...)` resolver and
+   per-workspace roles were deferred to Stage 15 (they need shared workspaces).
+3. **Stage 14 — Streaming chat** ✅ (done): a UX insert before the big B2B
+   stage — token-by-token assistant via `/api/chat/stream`.
+4. **Stage 15 — Org & courses:** `Organization` / `OrganizationMember` tables,
+   `Workspace.organization_id`, `can(user, action, workspace)` + roles
+   (`teacher`/`student`/`viewer`), invite-by-code, active-workspace selection,
    per-org Chroma isolation.
-4. **Stage 15 — Billing:** payment provider (ЮKassa / Stripe) + webhooks — org
+5. **Stage 16 — Billing:** payment provider (ЮKassa / Stripe) + webhooks — org
    seats + B2C pro / season-pass.
-5. **Later:** SSO, answer caching, teacher analytics, 2FA.
+6. **Later:** SSO, answer caching, teacher analytics, 2FA.
 
 ---
 

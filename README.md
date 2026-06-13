@@ -446,7 +446,7 @@ PR не должен попадать в main, если CI красный.
 * `/api/diagnostics/*` и `/api/admin/*` (audit-лог, статистика, управление пользователями) — только для superuser;
 * `AUTH_COOKIE_SECURE=true` обязателен в prod за HTTPS (backend предупреждает в логах, если на Postgres-развёртывании он `false`).
 
-**Отложено (future):** per-workspace роли teacher/student/viewer и общие workspace (Stage 14 — B2B), отзыв/refresh JWT, CSRF-токен (сейчас прикрыто `SameSite=Lax`), проверка email, SSO.
+**Отложено (future):** per-workspace роли teacher/student/viewer и общие workspace (Stage 15 — B2B), отзыв/refresh JWT, CSRF-токен (сейчас прикрыто `SameSite=Lax`), проверка email, SSO.
 
 ---
 
@@ -524,7 +524,7 @@ python -c "from src.db import SessionLocal; from src.db_models import User; s=Se
 
 Осознанно отложенные known-gaps, которые не блокируют основную работу:
 
-* per-workspace роли (teacher/student/viewer) и общие workspace — это B2B-слой (Stage 14); promote/demote/бан на уровне платформы уже есть (Stage 13);
+* per-workspace роли (teacher/student/viewer) и общие workspace — это B2B-слой (Stage 15); promote/demote/бан на уровне платформы уже есть (Stage 13);
 * мобильная адаптация (сейчас базовая CSS-деградация, без mobile-first);
 * английский язык интерфейса (UI только на русском, без i18n);
 * light theme;
@@ -543,12 +543,13 @@ python -c "from src.db import SessionLocal; from src.db_models import User; s=Se
 * **Stage 10 — Documentation:** ARCHITECTURE.md, DEMO.md, финальный README.
 * **Stage 11 — Мультизагрузка:** загрузка нескольких файлов сразу (выбор + drag-and-drop), последовательная очередь на фронте через существующий endpoint, прогресс «Файл i из N», отмена очереди.
 * **Stage 12 — Тарифы/квоты/метеринг:** `User.plan` (free/pro), лимиты + квоты (chat/summary/upload → `402`), `usage_events` ledger, `get_billing_context` (форвард-совместимо с org), usage-панель + paywall. Фундамент монетизации.
-* **Stage 13 — Multi-tenant security & admin foundation:** per-user rate-limit (NAT-фикс для вузов), бан рубит живую сессию, superuser-управление пользователями (promote/demote + ban/unban с self- и last-superuser-guard). См. [`design/multi-tenant-security.md`](design/multi-tenant-security.md).
+* **Stage 13 — Multi-tenant security & admin foundation:** per-user rate-limit (NAT-фикс для вузов), бан рубит живую сессию, superuser-управление пользователями (promote/demote + ban/unban с self- и last-superuser-guard, защищённый root). См. [`design/multi-tenant-security.md`](design/multi-tenant-security.md).
+* **Stage 14 — Стриминг чата:** ответ ассистента печатается по токенам (`POST /api/chat/stream`, NDJSON); отмена/Стоп, paywall до старта потока, фолбэк на `/api/chat` без двойного списания.
 
 ### Дальше
 
-* **Stage 14 — B2B foundation** (по [`design/multi-tenant-security.md`](design/multi-tenant-security.md) + [`design/monetization-and-b2b.md`](design/monetization-and-b2b.md)): `Organization`/`OrganizationMember`, `Workspace.organization_id`, роли teacher/student/viewer + `can(user, action, workspace)`, курсы, invite по коду, выбор активного workspace, per-org изоляция (кафедра → преподаватели → курсы → студенты).
-* **Stage 15 — Billing:** платёжка (ЮKassa / Stripe) + вебхуки.
+* **Stage 15 — B2B foundation** (по [`design/multi-tenant-security.md`](design/multi-tenant-security.md) + [`design/monetization-and-b2b.md`](design/monetization-and-b2b.md)): `Organization`/`OrganizationMember`, `Workspace.organization_id`, роли teacher/student/viewer + `can(user, action, workspace)`, курсы, invite по коду, выбор активного workspace, per-org изоляция (кафедра → преподаватели → курсы → студенты).
+* **Stage 16 — Billing:** платёжка (ЮKassa / Stripe) + вебхуки.
 * **Responsive polish:** mobile-first вёрстка, гамбургер-меню, тач-оптимизация.
 * **i18n:** английский интерфейс (next-intl).
 * **pgvector:** перенос векторного хранилища в PostgreSQL.

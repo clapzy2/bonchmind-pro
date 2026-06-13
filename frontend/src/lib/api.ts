@@ -361,7 +361,10 @@ export async function getMaterialProgress(): Promise<MaterialProgressResponse> {
   });
 }
 
-export async function uploadMaterial(file: File): Promise<MaterialActionResponse> {
+export async function uploadMaterial(
+  file: File,
+  signal?: AbortSignal,
+): Promise<MaterialActionResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
@@ -369,6 +372,7 @@ export async function uploadMaterial(file: File): Promise<MaterialActionResponse
     method: "POST",
     credentials: "include",
     body: formData,
+    signal,
   });
 
   ensureResponseOk(response, "Upload");

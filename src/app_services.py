@@ -511,6 +511,12 @@ def upload_material_service(workspace_id: str, user_id: str, file_name, content)
                 original_name=normalized_name,
                 content=content,
                 cancel_check=lambda: _is_cancel_requested(workspace_id),
+                # Forward add_book's phase/percent reports to the polled
+                # workspace progress so the bar moves smoothly instead of
+                # jumping 1% -> 100%.
+                progress_callback=lambda **payload: _update_material_progress(
+                    workspace_id, **payload
+                ),
             )
         except knowledge_base.IndexingCancelled:
             # Cooperative cancel (Stage 9a): create_document already rolled back

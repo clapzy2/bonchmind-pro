@@ -87,7 +87,13 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
   const [progress, setProgress] = useState<MaterialProgressResponse>(idleMaterialProgress);
   const [notice, setNotice] = useState<MaterialOperationNotice | null>(null);
   const [activeOperation, setActiveOperation] = useState<RunArgs["operation"] | null>(null);
+  // Immediate "cancel requested" flag for responsive UI — the real stop still
+  // happens at the next batch checkpoint on the backend.
+  const [cancelling, setCancelling] = useState(false);
   const pendingRef = useRef<{ onComplete?: (name: string) => void; materialName: string } | null>(null);
+  // Aborts the in-flight upload POST so "Отменить" can stop a large file mid
+  // transfer (before the backend even queues the indexing job).
+  const abortRef = useRef<AbortController | null>(null);
 
   const isRunning = activeOperation !== null;
 
@@ -102,9 +108,17 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
 
     async function poll() {
       const response = await getMaterialProgress();
-      if (!cancelled) {
-        setProgress(response);
+      if (cancelled) {
+        return;
       }
+      // Ignore the pristine idle snapshot (active=false, phase=""): the backend
+      // hasn't queued the job yet — e.g. a large file is still transferring.
+      // Overwriting the optimistic "active" state here is what made the
+      // progress bar / cancel button vanish until the upload finished.
+      if (!response.active && response.phase === "") {
+        return;
+      }
+      setProgress(response);
     }
 
     poll().catch(() => undefined);
@@ -154,12 +168,16 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
       }
 
       pendingRef.current = null;
+      abortRef.current = null;
       setActiveOperation(null);
+      setCancelling(false);
     }
 
     finalize().catch(() => {
       pendingRef.current = null;
+      abortRef.current = null;
       setActiveOperation(null);
+      setCancelling(false);
     });
 
     return () => {
@@ -190,8 +208,13 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
   }, []);
 
   const cancel = useCallback(async () => {
+    setCancelling(true);
     setNotice({ tone: "info", text: "Отменяю операцию…" });
+    // Abort the in-flight upload POST (stops a large file mid-transfer); the
+    // run() catch turns the AbortError into a cancelled state.
+    abortRef.current?.abort();
     try {
+      // Also ask the backend to cancel the indexing job if it already started.
       await cancelMaterialOperation();
     } catch (err) {
       if (handleAuthError(err, router)) {
@@ -240,6 +263,24 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
         // Snapshot progress now; the polling + finalize effects take over.
         setProgress(await getMaterialProgress());
       } catch (err) {
+        // Cancelled mid-transfer via AbortController → treat as a cancel, not
+        // an error. The backend never queued a job, so nothing to roll back.
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setNotice({ tone: "info", text: `Загрузка ${args.currentFile ?? ""} отменена.` });
+          setProgress({
+            active: false,
+            operation: "idle",
+            phase: "cancelled",
+            message: `Загрузка ${args.currentFile ?? ""} отменена.`,
+            progress: 100,
+            current_file: args.currentFile ?? "",
+            error: "",
+          });
+          pendingRef.current = null;
+          setActiveOperation(null);
+          setCancelling(false);
+          return;
+        }
         if (handleAuthError(err, router)) {
           return;
         }
@@ -261,8 +302,10 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
   );
 
   const uploadFile = useCallback(
-    (file: File, onComplete?: (materialName: string) => void) =>
-      run({
+    (file: File, onComplete?: (materialName: string) => void) => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+      return run({
         operation: "upload",
         currentFile: file.name,
         queuedMessage: `Ставлю в очередь загрузку ${file.name}`,
@@ -271,9 +314,10 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
           text: `Загружаю и индексирую ${file.name}. После этого материал появится в библиотеке.`,
         },
         errorText: "Не удалось загрузить материал. Проверьте backend и повторите попытку.",
-        call: () => uploadMaterial(file),
+        call: () => uploadMaterial(file, controller.signal),
         onComplete,
-      }),
+      });
+    },
     [run],
   );
 
@@ -327,6 +371,7 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
     setNotice,
     isRunning,
     activeOperation,
+    cancelling,
     uploadFile,
     deleteFile,
     reindexFile,

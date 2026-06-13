@@ -10,6 +10,8 @@ type UploadInlineProps = {
   notice: MaterialOperationNotice | null;
   /** Cancel the in-flight upload. When provided, an "Отменить" control shows. */
   onCancel?: () => void;
+  /** True once cancel was clicked — the control shows "Отменяю…" and disables. */
+  cancelling?: boolean;
 };
 
 /**
@@ -18,7 +20,7 @@ type UploadInlineProps = {
  * resulting success/error notice afterwards. Kept separate from each
  * screen's own chat/summary notice so the two never clobber each other.
  */
-export function UploadInline({ progress, notice, onCancel }: UploadInlineProps) {
+export function UploadInline({ progress, notice, onCancel, cancelling }: UploadInlineProps) {
   const showProgress = progress.active && progress.operation === "upload";
 
   if (!showProgress && !notice) {
@@ -38,10 +40,11 @@ export function UploadInline({ progress, notice, onCancel }: UploadInlineProps) 
               <button
                 type="button"
                 onClick={onCancel}
-                className="flex shrink-0 items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+                disabled={cancelling}
+                className="flex shrink-0 items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <X className="h-3.5 w-3.5" />
-                Отменить
+                {cancelling ? "Отменяю…" : "Отменить"}
               </button>
             ) : null}
           </div>

@@ -8,6 +8,7 @@ import type { MaterialInfo, SummaryResponse, TraceChunkGroup } from "@/lib/api";
 import { exportSummaryDocx, generateSummary } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { notifyUsageChanged, paywallText } from "@/lib/paywall";
 import { Markdown } from "@/components/markdown";
 import { UploadInline } from "@/components/upload-inline";
 import { useMaterialOperations } from "@/lib/use-material-operations";
@@ -172,6 +173,7 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
       });
       setResult(response);
       onResult?.(response);
+      notifyUsageChanged();
       setNotice({
         tone: response.trace?.status === "ok" ? "success" : "warning",
         text:
@@ -181,6 +183,12 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
       });
     } catch (err) {
       if (handleAuthError(err, router)) return;
+      const paywall = paywallText(err);
+      if (paywall) {
+        notifyUsageChanged();
+        setNotice({ tone: "warning", text: paywall });
+        return;
+      }
       setNotice({
         tone: "warning",
         text: "Не удалось сгенерировать конспект. Проверьте backend и повторите попытку.",

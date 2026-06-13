@@ -8,6 +8,7 @@ import type { ChatMessage, ChatResponse, MaterialInfo } from "@/lib/api";
 import { sendChatMessage } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { notifyUsageChanged, paywallText } from "@/lib/paywall";
 import { Markdown } from "@/components/markdown";
 import { UploadInline } from "@/components/upload-inline";
 import { useMaterialOperations } from "@/lib/use-material-operations";
@@ -181,6 +182,7 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
       setHistory(response.history);
       setLastResponse(response);
       setMessage("");
+      notifyUsageChanged();
       setNotice({
         tone: response.trace?.status === "ok" ? "success" : "warning",
         text:
@@ -190,6 +192,12 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
       });
     } catch (error) {
       if (handleAuthError(error, router)) return;
+      const paywall = paywallText(error);
+      if (paywall) {
+        notifyUsageChanged();
+        setNotice({ tone: "warning", text: paywall });
+        return;
+      }
       setNotice({
         tone: "warning",
         text:

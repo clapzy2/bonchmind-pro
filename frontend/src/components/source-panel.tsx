@@ -4,6 +4,7 @@ import { BookOpenText, FileSearch, MessageSquareQuote, ShieldCheck, Sparkles } f
 
 import type { SummaryResponse, SystemStatus, TraceChunk, TraceChunkGroup } from "@/lib/api";
 import type { WorkspaceSection } from "@/lib/workspace-section";
+import { UsagePanel } from "@/components/usage-panel";
 
 type SourcePanelProps = {
   activeSection: WorkspaceSection;
@@ -123,6 +124,8 @@ export function SourcePanel({ activeSection, status, lastRun }: SourcePanelProps
             </div>
           )}
         </div>
+
+        <UsagePanel refreshKey={activeSection} />
       </aside>
     );
   }
@@ -177,6 +180,8 @@ export function SourcePanel({ activeSection, status, lastRun }: SourcePanelProps
           </div>
         )}
       </div>
+
+      <UsagePanel refreshKey={activeSection} />
     </aside>
   );
 }

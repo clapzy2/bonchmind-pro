@@ -225,6 +225,46 @@ export class ValidationError extends Error {
   }
 }
 
+/**
+ * Raised when the backend returns 402 (Stage 12) because a plan limit is hit.
+ * Carries the structured payload so the UI can render an "upgrade" message
+ * naming the action, the limit, and the current plan.
+ */
+export class QuotaError extends Error {
+  action: string;
+  limit: number;
+  used: number;
+  plan: string;
+
+  constructor(payload: { action: string; limit: number; used: number; plan: string }) {
+    super(`quota_exceeded:${payload.action}`);
+    this.name = "QuotaError";
+    this.action = payload.action;
+    this.limit = payload.limit;
+    this.used = payload.used;
+    this.plan = payload.plan;
+  }
+}
+
+/** Throw a typed ``QuotaError`` if the response is a 402 quota rejection. */
+async function throwIfQuotaExceeded(response: Response): Promise<void> {
+  if (response.status !== 402) {
+    return;
+  }
+  let body: { action?: unknown; limit?: unknown; used?: unknown; plan?: unknown } = {};
+  try {
+    body = (await response.clone().json()) as typeof body;
+  } catch {
+    // non-JSON 402 — fall through with defaults
+  }
+  throw new QuotaError({
+    action: typeof body.action === "string" ? body.action : "",
+    limit: Number(body.limit ?? 0),
+    used: Number(body.used ?? 0),
+    plan: typeof body.plan === "string" ? body.plan : "free",
+  });
+}
+
 type FastApiDetailItem = { msg?: string; loc?: (string | number)[] };
 
 async function extractDetailMessage(response: Response): Promise<string | null> {
@@ -339,6 +379,34 @@ export async function getSystemStatus(): Promise<SystemStatus> {
   return fetchJson<SystemStatus>("/api/system/status", offlineStatus);
 }
 
+export type BillingCounter = {
+  used: number;
+  limit: number;
+};
+
+export type BillingMe = {
+  plan: string;
+  usage: {
+    materials: BillingCounter;
+    chat: BillingCounter;
+    summary: BillingCounter;
+  };
+};
+
+const offlineBilling: BillingMe = {
+  plan: "free",
+  usage: {
+    materials: { used: 0, limit: 0 },
+    chat: { used: 0, limit: 0 },
+    summary: { used: 0, limit: 0 },
+  },
+};
+
+/** Current plan + per-action usage for the usage/paywall panel (Stage 12). */
+export async function getBillingMe(): Promise<BillingMe> {
+  return fetchJson<BillingMe>("/api/billing/me", offlineBilling);
+}
+
 export async function getMaterials(): Promise<MaterialsResponse> {
   return fetchJson<MaterialsResponse>("/api/materials", { materials: [] });
 }
@@ -375,6 +443,7 @@ export async function uploadMaterial(
     signal,
   });
 
+  await throwIfQuotaExceeded(response);
   ensureResponseOk(response, "Upload");
   return (await response.json()) as MaterialActionResponse;
 }
@@ -454,6 +523,7 @@ export async function generateSummary(request: SummaryRequest): Promise<SummaryR
   // it can redirect to /login (Stage 5e). Keeping a soft fallback here would
   // hide auth failures behind a user-facing string and diverge from chat /
   // materials behaviour.
+  await throwIfQuotaExceeded(response);
   ensureResponseOk(response, "Summary");
   return (await response.json()) as SummaryResponse;
 }
@@ -484,6 +554,7 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
     body: JSON.stringify(request),
   });
 
+  await throwIfQuotaExceeded(response);
   ensureResponseOk(response, "Chat");
   return (await response.json()) as ChatResponse;
 }

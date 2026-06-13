@@ -486,7 +486,6 @@ docker compose exec api python -c "from src.db import SessionLocal; from src.db_
 
 Осознанно отложенные known-gaps, которые не блокируют основную работу:
 
-* загрузка нескольких файлов сразу;
 * роли тоньше суперпользователя (per-workspace роли, promote/demote, бан);
 * мобильная адаптация (сейчас базовая CSS-деградация, без mobile-first);
 * английский язык интерфейса (UI только на русском, без i18n);
@@ -504,6 +503,7 @@ docker compose exec api python -c "from src.db import SessionLocal; from src.db_
 * **Stage 8 — Production setup:** Docker / docker-compose, PostgreSQL, миграции в Docker, тома.
 * **Stage 9 — Security / Admin:** rate limits, audit-лог, anti-enumeration, upload-DoS guard (9a); superuser-экран «Админ» — статистика, журнал аудита, диагностика (9b); орфан-скраббер — сверка ChromaDB ↔ `Document`, кнопка «Сверить базу» (9c).
 * **Stage 10 — Documentation:** ARCHITECTURE.md, DEMO.md, финальный README.
+* **Stage 11 — Мультизагрузка:** загрузка нескольких файлов сразу (выбор + drag-and-drop), последовательная очередь на фронте через существующий endpoint, прогресс «Файл i из N», отмена очереди.
 
 ### Дальше
 

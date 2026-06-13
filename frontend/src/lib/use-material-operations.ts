@@ -452,6 +452,12 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
           } else {
             ok++;
             lastOkName = response.material_name || file.name;
+            // Refresh the library now so each file appears as it finishes,
+            // instead of the whole batch popping in at the very end (which
+            // looked like "shows 2 but only 1 loaded" mid-queue).
+            if (mountedRef.current) {
+              await Promise.resolve(onSync()).catch(() => undefined);
+            }
           }
         } catch (err) {
           // Aborted mid-transfer (cancel) → stop the whole queue.

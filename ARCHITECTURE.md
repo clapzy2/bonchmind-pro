@@ -124,6 +124,8 @@ erDiagram
 
 **Plans / quotas / metering (Stage 12):** фундамент монетизации. `User.plan` (`free`/`pro`) — субъект биллинга для личного workspace. Все лимиты идут через единый seam `src/billing.get_billing_context(workspace) → {plan, billing_subject_type, billing_subject_id, limits}` (сейчас субъект = владелец, потом = организация — одна ветка). `src/quota.py` проверяет квоты (`check_quota` → `QuotaExceeded` → `402`) и пишет ledger `usage_events` (`record_usage`): `chat`/`summary` — дневные лимиты, `upload` — общий лимит материалов (до чтения файла). `GET /api/billing/me` + usage-панель на фронте. Полная B2B-модель (кафедра → преподаватели → курсы → студенты) спроектирована в [`design/monetization-and-b2b.md`](design/monetization-and-b2b.md) и добавляется аддитивно.
 
+**Multi-tenant security (Stage 13):** фундамент под B2B. Rate-limit ключуется **по пользователю** для авторизованных ручек (`src/rate_limit.user_or_ip`) — общий NAT вуза больше не позволяет одному студенту задушить группу; `login`/`register` остаются per-IP. Бан (`is_active=false`) теперь проверяется в `get_current_user`, поэтому рубит уже выданный JWT сразу. Superuser управляет пользователями: `GET /api/admin/users`, `POST /api/admin/users/{id}/role|active` (promote/demote, ban/unban) с двумя защитами — self-guard и last-active-superuser guard. Стратегическая модель зафиксирована как **B2B-seat (кафедра)**, B2C — витрина; следующий крупный слой (Stage 14, Organization/Courses/роли + `can(user, action, workspace)`) спроектирован в [`design/multi-tenant-security.md`](design/multi-tenant-security.md).
+
 ---
 
 ## Где что лежит
@@ -144,6 +146,7 @@ erDiagram
 | Frontend API-клиент + auth-хелперы | `frontend/src/lib/api.ts`, `frontend/src/lib/auth-context.tsx` |
 | Экраны рабочих пространств | `frontend/src/components/{assistant,summary,materials,admin}-workspace.tsx` |
 | Тарифы / квоты / метеринг | `src/billing.py`, `src/quota.py`; `User.plan` + `UsageEvent`; `GET /api/billing/me`; `frontend/src/components/usage-panel.tsx`, `frontend/src/lib/paywall.ts` |
+| Rate-limit keying + управление юзерами | `src/rate_limit.py` (`user_or_ip`); `/api/admin/users*` → `app_services.admin_set_user_{role,active}`; секция «Пользователи» в `admin-workspace.tsx` |
 
 ---
 

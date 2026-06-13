@@ -438,14 +438,15 @@ PR не должен попадать в main, если CI красный.
 
 **Hardening (Stage 9a):**
 
-* **rate limiting** по IP на `/api/auth/login`, `/register`, `/api/chat`, `/api/materials/upload` (превышение → `429`);
+* **rate limiting** (превышение → `429`): авторизованные ручки (`/api/chat`, `/api/materials/upload`) ключуются **по пользователю** (Stage 13 — один студент за общим NAT/IP вуза не душит остальных), а `/api/auth/login` / `/register` — **по IP** (анти-брутфорс, юзера ещё нет);
 * **защита от upload-DoS**: ранняя проверка `Content-Length` + потоковое чтение с лимитом → файл больше `MAX_UPLOAD_BYTES` получает `413`, не читаясь целиком в память;
 * **login timing**: для несуществующего email всё равно выполняется bcrypt-verify (нет таймингового определения существования аккаунта);
-* **audit-log** (`audit_events`) важных действий: `login`, `upload`, `delete`, `reindex`;
-* `/api/diagnostics/*` и `/api/admin/*` (audit-лог, статистика инстанса) — только для superuser;
+* **audit-log** (`audit_events`) важных действий: `login`, `upload`, `delete`, `reindex`, `reconcile`, `promote`/`demote`/`ban`/`unban`;
+* **бан рубит живую сессию** (Stage 13): `get_current_user` отклоняет `is_active=false`, поэтому деактивация действует сразу на уже выданный JWT, а не только при следующем логине;
+* `/api/diagnostics/*` и `/api/admin/*` (audit-лог, статистика, управление пользователями) — только для superuser;
 * `AUTH_COOKIE_SECURE=true` обязателен в prod за HTTPS (backend предупреждает в логах, если на Postgres-развёртывании он `false`).
 
-**Отложено (future):** роли тоньше, чем `is_superuser` (per-workspace роли, promote/demote, бан), отзыв/refresh JWT, CSRF-токен (сейчас прикрыто `SameSite=Lax`), проверка email.
+**Отложено (future):** per-workspace роли teacher/student/viewer и общие workspace (Stage 14 — B2B), отзыв/refresh JWT, CSRF-токен (сейчас прикрыто `SameSite=Lax`), проверка email, SSO.
 
 ---
 
@@ -456,13 +457,12 @@ PR не должен попадать в main, если CI красный.
 * **статистика инстанса** — число пользователей, workspace, документов и событий аудита;
 * **журнал аудита** — последние события `login` / `upload` / `delete` / `reindex` / `reconcile` (время, действие, пользователь, объект, IP);
 * **диагностика** — сырой trace последнего запуска (раскрывающийся блок);
-* **«Сверить базу»** (Stage 9c) — единственное действие на запись: сверяет векторную базу (ChromaDB) с таблицей `Document` и удаляет осиротевшие фрагменты — те, у которых больше нет материала в библиотеке (`POST /api/admin/reconcile`). Идемпотентно, по всем workspace, строго в их границах. Чинит рассинхрон вида «в Библиотеке 0 материалов, а в индексе ещё что-то лежит» (после сбоя best-effort удаления или сброса dev-БД поверх сохранённого Chroma-стора).
-
-Управление ролями, promote/demote и бан пользователей сознательно вне scope.
+* **«Сверить базу»** (Stage 9c): сверяет векторную базу (ChromaDB) с таблицей `Document` и удаляет осиротевшие фрагменты — те, у которых больше нет материала в библиотеке (`POST /api/admin/reconcile`). Идемпотентно, по всем workspace, строго в их границах. Чинит рассинхрон вида «в Библиотеке 0 материалов, а в индексе ещё что-то лежит» (после сбоя best-effort удаления или сброса dev-БД поверх сохранённого Chroma-стора);
+* **«Пользователи»** (Stage 13): таблица всех пользователей + управление — выдать/снять права админа (`promote`/`demote`) и заблокировать/разблокировать (`ban`/`unban`). Действовать можно только над **другими**: строка самого себя выключена (нельзя выстрелить себе в ногу), и нельзя забанить/разжаловать **последнего активного суперпользователя** (система не останется без админа). Бан действует немедленно — живая сессия рубится на следующем запросе.
 
 ### Назначение первого суперпользователя
 
-Публичного API для выдачи прав суперпользователя нет — это сделано намеренно. Первого админа назначают напрямую в БД, выставляя `users.is_superuser = true` уже существующему пользователю.
+Дальше админов можно назначать прямо из раздела «Пользователи» (Stage 13). Но **самого первого** суперпользователя сделать неоткуда — публичного API для этого нет намеренно, поэтому его выставляют напрямую в БД (`users.is_superuser = true`).
 
 Сначала зарегистрируйте обычный аккаунт через UI (`/register`), затем повысьте его:
 
@@ -514,7 +514,7 @@ python -c "from src.db import SessionLocal; from src.db_models import User; s=Se
 
 Осознанно отложенные known-gaps, которые не блокируют основную работу:
 
-* роли тоньше суперпользователя (per-workspace роли, promote/demote, бан);
+* per-workspace роли (teacher/student/viewer) и общие workspace — это B2B-слой (Stage 14); promote/demote/бан на уровне платформы уже есть (Stage 13);
 * мобильная адаптация (сейчас базовая CSS-деградация, без mobile-first);
 * английский язык интерфейса (UI только на русском, без i18n);
 * light theme;
@@ -533,11 +533,12 @@ python -c "from src.db import SessionLocal; from src.db_models import User; s=Se
 * **Stage 10 — Documentation:** ARCHITECTURE.md, DEMO.md, финальный README.
 * **Stage 11 — Мультизагрузка:** загрузка нескольких файлов сразу (выбор + drag-and-drop), последовательная очередь на фронте через существующий endpoint, прогресс «Файл i из N», отмена очереди.
 * **Stage 12 — Тарифы/квоты/метеринг:** `User.plan` (free/pro), лимиты + квоты (chat/summary/upload → `402`), `usage_events` ledger, `get_billing_context` (форвард-совместимо с org), usage-панель + paywall. Фундамент монетизации.
+* **Stage 13 — Multi-tenant security & admin foundation:** per-user rate-limit (NAT-фикс для вузов), бан рубит живую сессию, superuser-управление пользователями (promote/demote + ban/unban с self- и last-superuser-guard). См. [`design/multi-tenant-security.md`](design/multi-tenant-security.md).
 
 ### Дальше
 
-* **Монетизация — следующие шаги** (по [`design/monetization-and-b2b.md`](design/monetization-and-b2b.md)): биллинг-платёжка + вебхуки; `Organization`/`OrganizationMember` + `Workspace.organization_id`; курсы, мультичленство и выбор активного workspace (кафедра → преподаватели → курсы → студенты).
-* **Тоньше роли:** per-workspace роли, promote/demote, бан пользователей, настройка rate limits из UI.
+* **Stage 14 — B2B foundation** (по [`design/multi-tenant-security.md`](design/multi-tenant-security.md) + [`design/monetization-and-b2b.md`](design/monetization-and-b2b.md)): `Organization`/`OrganizationMember`, `Workspace.organization_id`, роли teacher/student/viewer + `can(user, action, workspace)`, курсы, invite по коду, выбор активного workspace, per-org изоляция (кафедра → преподаватели → курсы → студенты).
+* **Stage 15 — Billing:** платёжка (ЮKassa / Stripe) + вебхуки.
 * **Responsive polish:** mobile-first вёрстка, гамбургер-меню, тач-оптимизация.
 * **i18n:** английский интерфейс (next-intl).
 * **pgvector:** перенос векторного хранилища в PostgreSQL.

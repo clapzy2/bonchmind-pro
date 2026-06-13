@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenText, FileSearch, MessageSquareQuote, Sparkles } from "lucide-react";
+import { BookOpenText, FileSearch, MessageSquareQuote, ShieldCheck, Sparkles } from "lucide-react";
 
 import type { SummaryResponse, SystemStatus, TraceChunk, TraceChunkGroup } from "@/lib/api";
 import type { WorkspaceSection } from "@/lib/workspace-section";
@@ -63,6 +63,12 @@ const panelCopy: Record<WorkspaceSection, { eyebrow: string; title: string; body
     title: "Состояние библиотеки",
     body: "Здесь важны готовность материалов и удобство навигации по ним.",
     icon: BookOpenText,
+  },
+  admin: {
+    eyebrow: "Администрирование",
+    title: "Состояние системы",
+    body: "Краткий обзор инстанса: модель, объём базы и индекса.",
+    icon: ShieldCheck,
   },
 };
 
@@ -143,6 +149,24 @@ export function SourcePanel({ activeSection, status, lastRun }: SourcePanelProps
               <p className="mt-3 text-sm leading-6 muted">
                 Обычно следующий сильный ход: “упрости”, “сравни”, “дай только главное” или “покажи подтверждение”.
               </p>
+            </div>
+          </>
+        ) : activeSection === "admin" ? (
+          <>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Документов в базе</div>
+              <div className="mt-3 text-2xl font-bold text-white">{status.total_books}</div>
+              <p className="mt-2 text-sm leading-6 muted">Источников, доступных системе прямо сейчас.</p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Фрагментов в индексе</div>
+              <div className="mt-3 text-2xl font-bold text-white">{status.total_chunks}</div>
+              <p className="mt-2 text-sm leading-6 muted">Сколько кусочков текста проиндексировано для поиска.</p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-[rgba(255,255,255,0.03)] p-4">
+              <div className="text-sm font-semibold text-white">Модель</div>
+              <div className="mt-3 break-words text-sm font-medium text-white">{status.model}</div>
+              <p className="mt-2 text-sm leading-6 muted">Режим работы: {status.llm_mode}.</p>
             </div>
           </>
         ) : (

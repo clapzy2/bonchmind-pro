@@ -1,18 +1,22 @@
-import { BookOpen, FileText, MessageSquareText, Upload } from "lucide-react";
+import { BookOpen, FileText, MessageSquareText, ShieldCheck, Upload } from "lucide-react";
 import type { MaterialInfo } from "@/lib/api";
 import type { WorkspaceSection } from "@/lib/workspace-section";
 
 type SidebarProps = {
   activeSection: WorkspaceSection;
   materials: MaterialInfo[];
+  /** Superusers get an extra "Админ" nav item (Stage 9b). */
+  isSuperuser: boolean;
   onSectionChange: (section: WorkspaceSection) => void;
 };
 
-const navItems = [
+const baseNavItems = [
   { key: "assistant", label: "Ассистент", icon: MessageSquareText },
   { key: "summary", label: "Конспект", icon: FileText },
   { key: "materials", label: "Библиотека", icon: BookOpen },
 ];
+
+const adminNavItem = { key: "admin", label: "Админ", icon: ShieldCheck };
 
 function getMaterialBadge(label: string) {
   if (label === "ready" || label === "plain_text") {
@@ -28,7 +32,9 @@ function getMaterialBadge(label: string) {
   };
 }
 
-export function Sidebar({ activeSection, materials, onSectionChange }: SidebarProps) {
+export function Sidebar({ activeSection, materials, isSuperuser, onSectionChange }: SidebarProps) {
+  const navItems = isSuperuser ? [...baseNavItems, adminNavItem] : baseNavItems;
+
   return (
     <aside className="sidebar">
       <div className="mb-8">

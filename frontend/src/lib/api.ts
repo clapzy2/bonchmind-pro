@@ -489,6 +489,75 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
 }
 
 // ---------------------------------------------------------------------------
+// Admin API (superuser-only) — Stage 9b
+// ---------------------------------------------------------------------------
+
+export type AdminStats = {
+  users: number;
+  workspaces: number;
+  documents: number;
+  audit_events: number;
+};
+
+export type AuditEvent = {
+  id: string;
+  action: string;
+  /** Null for anonymous/workspace-less events (e.g. a failed login). */
+  user_id: string | null;
+  workspace_id: string | null;
+  target: string;
+  ip: string;
+  /** ISO timestamp from the backend. */
+  created_at: string;
+};
+
+export type AuditLogResponse = {
+  events: AuditEvent[];
+};
+
+/**
+ * Instance-wide counts for the admin overview. Throws ``UnauthorizedError``
+ * on 401 (redirect to /login) and a generic ``Error`` on 403 — the admin UI
+ * is only mounted for superusers, so a 403 here means something is off.
+ */
+export async function getAdminStats(): Promise<AdminStats> {
+  const response = await fetch(apiUrl("/api/admin/stats"), {
+    cache: "no-store",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+
+  ensureResponseOk(response, "Admin stats");
+  return (await response.json()) as AdminStats;
+}
+
+/** Most recent audit events, newest-first. ``limit`` is clamped server-side. */
+export async function getAuditEvents(limit = 50): Promise<AuditEvent[]> {
+  const response = await fetch(apiUrl(`/api/admin/audit?limit=${encodeURIComponent(limit)}`), {
+    cache: "no-store",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+
+  ensureResponseOk(response, "Admin audit");
+  const data = (await response.json()) as AuditLogResponse;
+  return data.events;
+}
+
+/** Latest raw run diagnostics text (superuser-only). Empty string if none. */
+export async function getLatestDiagnostics(): Promise<string> {
+  const response = await fetch(apiUrl("/api/diagnostics/latest"), {
+    cache: "no-store",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+
+  ensureResponseOk(response, "Diagnostics");
+  const data = (await response.json()) as { text?: string };
+  return data.text ?? "";
+}
+
+// ---------------------------------------------------------------------------
 // Auth API
 // ---------------------------------------------------------------------------
 

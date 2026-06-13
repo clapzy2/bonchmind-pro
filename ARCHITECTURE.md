@@ -116,6 +116,8 @@ erDiagram
 
 Итог: даже при ошибке в клиенте пользователь не может увидеть чужой workspace — backend подставляет его собственный из cookie.
 
+**Hardening (Stage 9a):** rate limiting по IP на auth/chat/upload (`429`), защита от upload-DoS (ранний `413` без чтения файла в память), равное время ответа login для несуществующего email (anti-enumeration), и append-only audit-лог (`audit_events`) для `login`/`upload`/`delete`/`reindex`. Подробнее — раздел «Безопасность» в [`README.md`](README.md).
+
 ---
 
 ## Где что лежит

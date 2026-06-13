@@ -29,6 +29,12 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+# Precomputed bcrypt hash used to equalise login timing: when the email is
+# unknown we still run one ``verify_password`` against this dummy hash, so the
+# response time doesn't reveal whether an account exists (user enumeration).
+_DUMMY_PASSWORD_HASH = hash_password("bonchmind-timing-equalizer")
+
+
 def register_user(db: Session, payload: UserCreate) -> User:
     """Create a user + their personal workspace atomically.
 
@@ -58,11 +64,18 @@ def register_user(db: Session, payload: UserCreate) -> User:
 
 
 def authenticate_user(db: Session, email: str, password: str) -> User:
-    """Return the user matching the credentials, or raise 401."""
+    """Return the user matching the credentials, or raise 401.
+
+    Always runs exactly one ``verify_password`` — against the real hash if the
+    email exists, otherwise against ``_DUMMY_PASSWORD_HASH`` — so the timing of
+    "wrong password" and "no such email" is indistinguishable.
+    """
     user = db.execute(
         select(User).where(User.email == _normalize_email(email))
     ).scalar_one_or_none()
-    if user is None or not verify_password(password, user.password_hash):
+    password_hash = user.password_hash if user is not None else _DUMMY_PASSWORD_HASH
+    password_ok = verify_password(password, password_hash)
+    if user is None or not password_ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid_credentials",

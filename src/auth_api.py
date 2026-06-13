@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
-from src import auth_service
+import config
+from src import audit_service, auth_service
 from src.auth_models import (
     AuthResponse,
     MessageResponse,
@@ -22,9 +23,14 @@ from src.auth_models import (
 )
 from src.db import get_db
 from src.db_models import User
+from src.rate_limit import limiter
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else ""
 
 
 def _build_user_out(db: Session, user: User) -> UserOut:
@@ -45,8 +51,10 @@ def _build_user_out(db: Session, user: User) -> UserOut:
     response_model=AuthResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit(config.RATE_LIMIT_REGISTER)
 def register(
     payload: UserCreate,
+    request: Request,
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> AuthResponse:
@@ -57,14 +65,21 @@ def register(
 
 
 @router.post("/login", response_model=AuthResponse)
+@limiter.limit(config.RATE_LIMIT_LOGIN)
 def login(
     payload: UserLogin,
+    request: Request,
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> AuthResponse:
     user = auth_service.authenticate_user(db, payload.email, payload.password)
     token = auth_service.issue_access_token(user)
     auth_service.set_auth_cookie(response, token)
+    audit_service.record(
+        audit_service.ACTION_LOGIN,
+        user_id=user.id,
+        ip=_client_ip(request),
+    )
     return AuthResponse(access_token=token, user=_build_user_out(db, user))
 
 

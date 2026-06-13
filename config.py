@@ -107,6 +107,15 @@ AUTH_COOKIE_NAME = "bonchmind_auth"
 # Set to True only when serving the frontend over HTTPS in production.
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
 
+# --- Rate limiting (Stage 9a) ---------------------------------------------
+# Per-IP limits applied via slowapi. Tunable through env; strict on auth,
+# moderate on chat/upload. Disable entirely with RATE_LIMIT_ENABLED=false
+# (used by the test suite).
+RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "10/minute")
+RATE_LIMIT_REGISTER = os.getenv("RATE_LIMIT_REGISTER", "5/minute")
+RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "30/minute")
+RATE_LIMIT_UPLOAD = os.getenv("RATE_LIMIT_UPLOAD", "20/minute")
+
 
 def validate_config():
     """Проверяет базовые настройки проекта."""

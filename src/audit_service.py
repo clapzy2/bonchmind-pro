@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import select
+
 from src.db import SessionLocal
 from src.db_models import AuditEvent
 
@@ -48,3 +50,35 @@ def record(
             db.close()
     except Exception:  # pragma: no cover - audit must never break the request
         logger.warning("audit write failed for action=%s", action, exc_info=True)
+
+
+# Read side of the audit log — surfaced only to superusers via /api/admin/audit.
+_DEFAULT_LIMIT = 50
+_MAX_LIMIT = 500
+
+
+def list_recent(limit: int = _DEFAULT_LIMIT) -> list[AuditEvent]:
+    """Return the most recent audit events, newest first (Stage 9b).
+
+    Opens its own short-lived session like :func:`record`. ``limit`` is clamped
+    to ``[1, 500]`` so a hostile or buggy caller can't ask for an unbounded
+    scan. Unlike ``record`` this is allowed to raise — the admin route surfaces
+    a real error rather than silently showing an empty log.
+    """
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = _DEFAULT_LIMIT
+    limit = max(1, min(limit, _MAX_LIMIT))
+
+    db = SessionLocal()
+    try:
+        return list(
+            db.execute(
+                select(AuditEvent)
+                .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+                .limit(limit)
+            ).scalars()
+        )
+    finally:
+        db.close()

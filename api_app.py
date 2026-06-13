@@ -14,7 +14,8 @@ Endpoint access tiers:
 * **Authenticated** (any logged-in user): every endpoint that uses the
   ``get_current_workspace_id`` dependency (transitively requires auth) plus
   ``/api/auth/me`` and ``/api/auth/logout``.
-* **Superuser-only** (``is_superuser=True``): ``/api/diagnostics/*``.
+* **Superuser-only** (``is_superuser=True``): ``/api/diagnostics/*`` and
+  ``/api/admin/*`` (audit log + system stats).
 
 ``get_current_workspace_id`` resolves to ``current_user.personal_workspace.id``
 on every request, so a session cookie is the *sole* source of truth for which
@@ -44,6 +45,9 @@ from src.rate_limit import limiter
 from src.db import get_db
 from src.db_models import User
 from src.api_models import (
+    AdminStats,
+    AuditEventOut,
+    AuditLogResponse,
     ChatRequest,
     ChatResponse,
     MaterialActionResponse,
@@ -286,3 +290,24 @@ def diagnostics_latest():
 @app.get("/api/diagnostics/latest.json", dependencies=_ADMIN)
 def diagnostics_latest_json():
     return services.get_latest_diagnostics_json() or {}
+
+
+# ---------------------------------------------------------------------------
+# Admin (superuser-only). Audit log + system stats for the admin screen
+# (Stage 9b). Both gated by ``_ADMIN`` (``require_superuser``): a regular
+# authenticated user gets 403, an anonymous caller gets 401.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/admin/audit", response_model=AuditLogResponse, dependencies=_ADMIN)
+def admin_audit(limit: int = 50):
+    """Most recent audit events, newest first. ``limit`` is clamped server-side
+    (see ``audit_service.list_recent``); no pagination yet (Stage 9b scope)."""
+    events = audit_service.list_recent(limit)
+    return AuditLogResponse(events=[AuditEventOut.model_validate(e) for e in events])
+
+
+@app.get("/api/admin/stats", response_model=AdminStats, dependencies=_ADMIN)
+def admin_stats():
+    """Instance-wide counts (users / workspaces / documents / audit events)."""
+    return services.get_admin_stats()

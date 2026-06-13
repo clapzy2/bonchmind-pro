@@ -1,8 +1,9 @@
 """Pydantic models for the BonchMind API."""
 
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MaterialInfo(BaseModel):
@@ -108,3 +109,39 @@ class SectionsResponse(BaseModel):
 
 class MaterialsResponse(BaseModel):
     materials: list[MaterialInfo] = Field(default_factory=list)
+
+
+class AuditEventOut(BaseModel):
+    """One audit-log row as exposed to the superuser admin screen (Stage 9b).
+
+    Mirrors :class:`src.db_models.AuditEvent`. ``user_id`` / ``workspace_id``
+    are nullable because anonymous or workspace-less events (e.g. a failed
+    login) are still recorded.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    action: str
+    user_id: str | None = None
+    workspace_id: str | None = None
+    target: str = ""
+    ip: str = ""
+    created_at: datetime
+
+
+class AuditLogResponse(BaseModel):
+    events: list[AuditEventOut] = Field(default_factory=list)
+
+
+class AdminStats(BaseModel):
+    """System-wide counts for the admin overview (Stage 9b).
+
+    Not workspace-scoped — this is superuser-only data covering the whole
+    instance.
+    """
+
+    users: int = 0
+    workspaces: int = 0
+    documents: int = 0
+    audit_events: int = 0

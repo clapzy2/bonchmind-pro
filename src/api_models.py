@@ -145,3 +145,19 @@ class AdminStats(BaseModel):
     workspaces: int = 0
     documents: int = 0
     audit_events: int = 0
+
+
+class ReconcileWorkspaceResult(BaseModel):
+    """Per-workspace outcome of a reconcile run (Stage 9c)."""
+
+    workspace_id: str
+    removed_chunks: int = 0
+    removed_documents: int = 0
+
+
+class ReconcileResponse(BaseModel):
+    """Result of scrubbing orphan KB chunks instance-wide (Stage 9c)."""
+
+    workspaces: list[ReconcileWorkspaceResult] = Field(default_factory=list)
+    total_removed_chunks: int = 0
+    total_removed_documents: int = 0

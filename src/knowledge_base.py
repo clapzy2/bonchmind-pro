@@ -307,6 +307,84 @@ class KnowledgeBase:
         gc.collect()
         return f"🗑️ document_id={document_id}: удалено {len(ids)} фрагментов"
 
+    # ------------------------------------------------------------------
+    # Reconcile helpers (Stage 9c): the Document SQL table is the source of
+    # truth; these let ``src.maintenance`` find and scrub chunks that no
+    # longer have a backing Document row.
+    # ------------------------------------------------------------------
+
+    def list_workspace_ids(self):
+        """Все ``workspace_id``, присутствующие в индексе (по метаданным чанков).
+
+        Реконсилер перечисляет workspace отсюда, а не из SQL: workspace, у
+        которого строки ``Document`` уже стёрты (например, сброс dev-БД),
+        иначе бы потерялся, а его осиротевшие чанки остались бы в Chroma.
+        """
+        if self._col.count() == 0:
+            return []
+        data = self._col.get(include=["metadatas"])
+        workspaces = set()
+        for m in data.get("metadatas", []) or []:
+            if m:
+                ws = m.get("workspace_id")
+                if ws:
+                    workspaces.add(ws)
+        return sorted(workspaces)
+
+    def list_document_ids(self, *, workspace_id):
+        """Все ``document_id``, присутствующие в индексе для данного workspace."""
+        if self._col.count() == 0:
+            return []
+        data = self._col.get(where={"workspace_id": workspace_id}, include=["metadatas"])
+        doc_ids = set()
+        for m in data.get("metadatas", []) or []:
+            if m:
+                doc_ids.add(m.get("document_id", "") or "")
+        return sorted(doc_ids)
+
+    def remove_orphan_chunks(self, *, workspace_id, valid_document_ids):
+        """Удалить чанки workspace, чей ``document_id`` не входит в valid-множество.
+
+        ``valid_document_ids`` — это живые ``Document.id`` из SQL для данного
+        workspace. Любой чанк с ``document_id`` вне этого множества (включая
+        пустой/legacy ``document_id``) считается осиротевшим и удаляется.
+
+        Удаление строго в рамках workspace: выбираются только чанки этого
+        ``workspace_id`` и удаляются по их собственным ids — пересечь границу
+        tenant'а невозможно. Идемпотентно: повторный вызов не находит сирот и
+        ничего не удаляет.
+
+        Возвращает ``{"removed_chunks": int, "removed_document_ids": [...]}``.
+        """
+        if self._col.count() == 0:
+            return {"removed_chunks": 0, "removed_document_ids": []}
+
+        valid = set(valid_document_ids or [])
+        data = self._col.get(where={"workspace_id": workspace_id}, include=["metadatas"])
+        ids = data.get("ids", []) or []
+        metas = data.get("metadatas", []) or []
+
+        orphan_ids = []
+        orphan_doc_ids = set()
+        for chunk_id, meta in zip(ids, metas):
+            doc_id = (meta or {}).get("document_id", "") or ""
+            if doc_id not in valid:
+                orphan_ids.append(chunk_id)
+                orphan_doc_ids.add(doc_id)
+
+        if orphan_ids:
+            self._col.delete(ids=orphan_ids)
+            gc.collect()
+            self._log(
+                f"reconcile workspace={workspace_id}: removed {len(orphan_ids)} "
+                f"orphan chunks ({len(orphan_doc_ids)} document(s))"
+            )
+
+        return {
+            "removed_chunks": len(orphan_ids),
+            "removed_document_ids": sorted(orphan_doc_ids),
+        }
+
     def remove_book(self, file_name, *, workspace_id):
         """Удалить все чанки файла по ``source_file`` метаданным (legacy).
 

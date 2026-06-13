@@ -26,6 +26,44 @@ def test_admin_forbidden_for_regular_user(authed_client, path):
     assert resp.status_code == 403
 
 
+class _StubKB:
+    """Stand-in for ``runtime.get_kb()`` so the reconcile endpoint test never
+    instantiates the real KnowledgeBase (which would load the 2 GB BGE models)."""
+
+    def list_workspace_ids(self):
+        return []
+
+    def remove_orphan_chunks(self, **kwargs):
+        return {"removed_chunks": 0, "removed_document_ids": []}
+
+
+def test_admin_reconcile_requires_authentication(api_client):
+    assert api_client.post("/api/admin/reconcile").status_code == 401
+
+
+def test_admin_reconcile_forbidden_for_regular_user(authed_client):
+    assert authed_client.post("/api/admin/reconcile").status_code == 403
+
+
+def test_admin_reconcile_runs_for_superuser(superuser_client, monkeypatch):
+    """Superuser can run reconcile; response carries the totals shape.
+
+    ``runtime.get_kb`` is stubbed so the test exercises the endpoint wiring
+    (auth gate → service → audit → response model) without loading models.
+    """
+    from src import runtime
+
+    monkeypatch.setattr(runtime, "get_kb", lambda: _StubKB())
+
+    resp = superuser_client.post("/api/admin/reconcile")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"workspaces", "total_removed_chunks", "total_removed_documents"}
+    assert body["workspaces"] == []
+    assert body["total_removed_chunks"] == 0
+    assert body["total_removed_documents"] == 0
+
+
 def test_admin_stats_counts_whole_instance(superuser_client):
     """Stats count every user/workspace in the instance, not just the caller's."""
     from src import auth_service

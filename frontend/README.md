@@ -184,8 +184,7 @@ pytest tests/ -q
 
 Не блокируют основную работу (полный список — в корневом [`README.md`](../README.md)):
 
-* загрузка нескольких файлов сразу;
-* admin diagnostics UI и роли;
+* роли тоньше суперпользователя (per-workspace роли, promote/demote, бан);
 * мобильная адаптация (mobile-first);
 * английский интерфейс (i18n);
 * light theme.

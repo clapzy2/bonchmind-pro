@@ -864,7 +864,7 @@ What landed:
 Known-gaps still open (from §3 of `design/stage-6-parity.md`),
 recorded for future follow-ups:
 
-* multi-file upload in `MaterialsWorkspace`;
+* ~~multi-file upload in `MaterialsWorkspace`~~ **Done in Stage 11** (sequential frontend queue through the existing endpoint, no backend change);
 * diagnostics trace JSON export button on `QualityWorkspace`;
 * real Settings tab content (waits for user-facing toggles to exist);
 * superuser diagnostics UI (`/api/diagnostics/*` stays raw-HTTP);

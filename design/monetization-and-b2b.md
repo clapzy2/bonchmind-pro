@@ -167,13 +167,15 @@ Hard rule to preserve: *never build a path from a name — always read
 model was fixed to **B2B-seat primary**, so the **B2B foundation (security /
 roles) now comes before billing** — see
 [`multi-tenant-security.md`](multi-tenant-security.md). Updated order:
-- **Stage 13 — Multi-tenant security / B2B foundation:** centralized
-  `can(user, action, workspace)` authorization resolver, per-workspace roles
-  (`teacher`/`student`/`viewer`), per-user rate-limit, isolation hardening.
-- **Stage 14 — Org & courses:** `Organization` / `OrganizationMember` tables,
-  `Workspace.organization_id` (nullable), org branch in the billing resolver,
-  invite-by-code, **active-workspace selector**, per-org isolation.
-- **Stage 15 — Billing:** payment provider (ЮKassa / Stripe) + webhooks → flips
+- **Stage 13 — Multi-tenant security / B2B foundation** ✅: per-user rate-limit,
+  live-session ban, superuser user-management. (The `can(...)` resolver + roles
+  moved to Stage 15 — they need shared workspaces.)
+- **Stage 14 — Streaming chat** ✅: UX insert (token-by-token assistant).
+- **Stage 15 — Org & courses:** `Organization` / `OrganizationMember` tables,
+  `Workspace.organization_id` (nullable), `can(user, action, workspace)` +
+  roles, org branch in the billing resolver, invite-by-code,
+  **active-workspace selector**, per-org isolation.
+- **Stage 16 — Billing:** payment provider (ЮKassa / Stripe) + webhooks → flips
   the plan (org seats + B2C pro/season) on payment.
 
 ---
@@ -182,12 +184,13 @@ roles) now comes before billing** — see
 
 1. **Stage 12** — `User.plan`, limits, `UsageEvent`, billing-context resolver,
    paywall UI. ✅
-2. **Stage 13** — multi-tenant security / B2B foundation (authz resolver, roles,
-   per-user rate-limit, isolation) — see `multi-tenant-security.md`.
-3. **Stage 14** — `Organization` / `OrganizationMember` / `Workspace.organization_id`
-   + org branch in `get_billing_context`; courses, multi-membership,
-   active-workspace selection.
-4. **Stage 15** — billing provider + webhooks.
+2. **Stage 13** ✅ — multi-tenant security primitives (per-user rate-limit,
+   ban enforcement, user-management) — see `multi-tenant-security.md`.
+3. **Stage 14** ✅ — streaming chat (UX insert).
+4. **Stage 15** — `Organization` / `OrganizationMember` / `Workspace.organization_id`
+   + `can(...)` + roles + org branch in `get_billing_context`; courses,
+   multi-membership, active-workspace selection.
+5. **Stage 16** — billing provider + webhooks.
 
 ### The seams we protect
 

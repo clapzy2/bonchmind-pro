@@ -153,7 +153,7 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
 
   async function handleGenerate() {
     const normalizedTopic = topic.trim();
-    if (!normalizedTopic || isLoading) {
+    if (isLoading) {
       return;
     }
 
@@ -162,7 +162,9 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
     setExportError("");
     setNotice({
       tone: "info",
-      text: "BonchMind собирает релевантные фрагменты и готовит конспект.",
+      text: normalizedTopic
+        ? "BonchMind собирает релевантные фрагменты и готовит конспект."
+        : "BonchMind собирает конспект по всему материалу.",
     });
     try {
       const response = await generateSummary({
@@ -260,7 +262,7 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-white">Конспект</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-              Выберите материал и тему — соберём конспект с опорой на источники.
+              Выберите материал, при желании задайте тему — соберём конспект с опорой на источники.
             </p>
           </div>
           <button
@@ -291,12 +293,12 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
         </div>
 
         <label className="mt-6 block space-y-2">
-          <span className="text-sm font-semibold text-white">Тема</span>
+          <span className="text-sm font-semibold text-white">Тема (необязательно)</span>
           <textarea
             className="bm-textarea min-h-32 w-full text-white"
             value={topic}
             onChange={(event) => setTopic(event.target.value)}
-            placeholder="Например: Что такое Wi-Fi?"
+            placeholder="Например: Что такое Wi-Fi? Пусто — конспект по всему материалу."
           />
         </label>
 
@@ -311,7 +313,7 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
           <button
             className="bm-button-primary h-12 px-6 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
-            disabled={isLoading || !topic.trim()}
+            disabled={isLoading}
             onClick={handleGenerate}
           >
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -340,7 +342,6 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
             <Search className="h-4 w-4" />
             {showSources ? "Скрыть источники" : "Проверить источники"}
           </button>
-          <p className="text-sm text-muted">Скрепка — загрузить материал, не уходя с экрана.</p>
         </div>
 
         <UploadInline progress={upload.progress} notice={upload.notice} onCancel={upload.cancel} cancelling={upload.cancelling} />

@@ -22,7 +22,9 @@ Summary generation calls ``src.summary_engine`` strategies directly with
 without going through the Gradio entrypoint (Stage 6d).
 """
 
+import json
 import os
+from dataclasses import dataclass, field
 from threading import Lock, Thread
 
 from fastapi import HTTPException, status
@@ -910,68 +912,69 @@ def _group_chat_sources(sources, selected_file, limit=4):
     return result
 
 
-def chat_service(workspace_id: str, request: ChatRequest):
-    # Quota gate (Stage 12): once the daily chat cap is hit, the whole chat is
-    # paywalled with a 402 — raised before any work / trace is opened. Cheap
-    # paths (greeting / empty / no-context) never record usage, so they don't
-    # consume the cap.
-    quota.check_quota(workspace_id, quota.ACTION_CHAT)
+@dataclass
+class _ChatPlan:
+    """Output of :func:`_prepare_chat` — either a canned early answer or the
+    params to generate one. Shared by the sync (`chat_service`) and streaming
+    (`chat_stream_service`) paths so the RAG / context / source logic lives in
+    exactly one place."""
 
+    kind: str  # "empty" | "greeting" | "no_context" | "generate"
+    message: str = ""
+    selected_file: str = "Все файлы"
+    answer: str = ""
+    summary: str = ""
+    confidence_label: str = ""
+    followup_suggestions: list = field(default_factory=list)
+    grouped_sources: list = field(default_factory=list)
+    full_prompt: str = ""
+    history: list = field(default_factory=list)
+
+
+_GREETING_FOLLOWUPS = [
+    "Объясни тему простыми словами.",
+    "Сделай краткий ответ по разделу.",
+    "Приведи только цитаты по теме.",
+]
+_NO_CONTEXT_FOLLOWUPS = [
+    "Выбери другой материал.",
+    "Сузь вопрос до конкретного раздела.",
+    "Переформулируй тему короче.",
+]
+
+
+def _prepare_chat(workspace_id: str, request: ChatRequest) -> _ChatPlan:
+    """Run the chat pipeline up to (but not including) generation.
+
+    Free of tracing / LLM calls so the sync and streaming services reuse the
+    message classification, retrieval and prompt building identically.
+    """
     message = str(request.message or "").strip()
     selected_file = _normalize_selected_file(request.selected_file)
     history = [ChatMessage(role=item.role, content=item.content) for item in (request.history or [])]
 
-    start_trace(
-        kind="chat",
-        request={
-            "message": message,
-            "selected_file": selected_file,
-            "answer_mode": request.answer_mode,
-            "history_len": str(len(history)),
-        },
-    )
-
     if not message:
-        finish_trace(output="")
-        return ChatResponse(
-            answer="",
-            history=history,
-            sources=[],
-            diagnostics=format_last_trace(),
-            trace=get_last_trace(),
-        )
+        return _ChatPlan(kind="empty", message=message, selected_file=selected_file, history=history)
 
     if is_greeting(message):
-        answer = "Привет! Задайте вопрос по загруженным текстам."
-        updated_history = history + [
-            ChatMessage(role="user", content=message),
-            ChatMessage(role="assistant", content=answer),
-        ]
-        finish_trace(output=answer)
-        return ChatResponse(
-            answer=answer,
-            summary=answer,
+        return _ChatPlan(
+            kind="greeting",
+            message=message,
+            selected_file=selected_file,
+            answer="Привет! Задайте вопрос по загруженным текстам.",
+            summary="Привет! Задайте вопрос по загруженным текстам.",
             confidence_label="system",
-            followup_suggestions=[
-                "Объясни тему простыми словами.",
-                "Сделай краткий ответ по разделу.",
-                "Приведи только цитаты по теме.",
-            ],
-            history=updated_history,
-            sources=[],
-            diagnostics=format_last_trace(),
-            trace=get_last_trace(),
+            followup_suggestions=list(_GREETING_FOLLOWUPS),
+            history=history,
         )
 
     kb = runtime.get_kb()
-    llm = DiagnosticLLM(runtime.get_llm())
     file_filter = "all" if selected_file == "Все файлы" else selected_file
 
     is_corr = is_correction(message)
     is_fu = is_followup(message)
     search_query = message
     prev_question, prev_answer = "", ""
-
     if is_corr or is_fu:
         prev_question, prev_answer = get_last_qa([item.model_dump() for item in history])
         if prev_question:
@@ -984,29 +987,19 @@ def chat_service(workspace_id: str, request: ChatRequest):
         section_filter=section_filter,
         workspace_id=workspace_id,
     )
-
     grouped_sources = _group_chat_sources(raw_sources, selected_file=selected_file)
 
     if not context:
-        answer = "НЕТ ИНФОРМАЦИИ - база пуста или файлы не проиндексированы."
-        updated_history = history + [
-            ChatMessage(role="user", content=message),
-            ChatMessage(role="assistant", content=answer),
-        ]
-        finish_trace(output=answer)
-        return ChatResponse(
-            answer=answer,
+        return _ChatPlan(
+            kind="no_context",
+            message=message,
+            selected_file=selected_file,
+            answer="НЕТ ИНФОРМАЦИИ - база пуста или файлы не проиндексированы.",
             summary="Ответ не найден в текущей базе знаний.",
             confidence_label="low",
-            followup_suggestions=[
-                "Выбери другой материал.",
-                "Сузь вопрос до конкретного раздела.",
-                "Переформулируй тему короче.",
-            ],
-            history=updated_history,
-            sources=grouped_sources,
-            diagnostics=format_last_trace(),
-            trace=get_last_trace(),
+            followup_suggestions=list(_NO_CONTEXT_FOLLOWUPS),
+            grouped_sources=grouped_sources,
+            history=history,
         )
 
     prompt_key = {
@@ -1039,35 +1032,163 @@ def chat_service(workspace_id: str, request: ChatRequest):
                 context=context,
             )
 
-    answer = llm.call(full_prompt)
+    return _ChatPlan(
+        kind="generate",
+        message=message,
+        selected_file=selected_file,
+        grouped_sources=grouped_sources,
+        full_prompt=full_prompt,
+        history=history,
+    )
 
-    if is_refusal(answer):
-        answer = _format_no_information_message(selected_file)
 
-    # Meter the action only once a real LLM answer was produced (the no-context
-    # branch above returns earlier without calling the model).
-    quota.record_usage(workspace_id, quota.ACTION_CHAT, meta={"answer_mode": request.answer_mode})
-
-    updated_history = history + [
+def _new_turn(history, message, answer):
+    return history + [
         ChatMessage(role="user", content=message),
         ChatMessage(role="assistant", content=answer),
     ]
+
+
+def chat_service(workspace_id: str, request: ChatRequest):
+    # Quota gate (Stage 12): once the daily chat cap is hit, the whole chat is
+    # paywalled with a 402 — raised before any work / trace is opened. Cheap
+    # paths (greeting / empty / no-context) never record usage.
+    quota.check_quota(workspace_id, quota.ACTION_CHAT)
+
+    start_trace(
+        kind="chat",
+        request={
+            "message": str(request.message or "").strip(),
+            "selected_file": _normalize_selected_file(request.selected_file),
+            "answer_mode": request.answer_mode,
+            "history_len": str(len(request.history or [])),
+        },
+    )
+
+    plan = _prepare_chat(workspace_id, request)
+
+    if plan.kind == "empty":
+        finish_trace(output="")
+        return ChatResponse(
+            answer="",
+            history=plan.history,
+            sources=[],
+            diagnostics=format_last_trace(),
+            trace=get_last_trace(),
+        )
+
+    if plan.kind in ("greeting", "no_context"):
+        finish_trace(output=plan.answer)
+        return ChatResponse(
+            answer=plan.answer,
+            summary=plan.summary,
+            confidence_label=plan.confidence_label,
+            followup_suggestions=plan.followup_suggestions,
+            history=_new_turn(plan.history, plan.message, plan.answer),
+            sources=plan.grouped_sources,
+            diagnostics=format_last_trace(),
+            trace=get_last_trace(),
+        )
+
+    llm = DiagnosticLLM(runtime.get_llm())
+    answer = llm.call(plan.full_prompt)
+    if is_refusal(answer):
+        answer = _format_no_information_message(plan.selected_file)
+
+    quota.record_usage(workspace_id, quota.ACTION_CHAT, meta={"answer_mode": request.answer_mode})
 
     finish_trace(output=answer)
     trace = get_last_trace()
     return ChatResponse(
         answer=answer,
         summary=_build_answer_summary(answer),
-        confidence_label=_build_confidence_label(grouped_sources, trace_status=(trace or {}).get("status", "ok")),
+        confidence_label=_build_confidence_label(plan.grouped_sources, trace_status=(trace or {}).get("status", "ok")),
         followup_suggestions=_build_followup_suggestions(
-            message=message,
+            message=plan.message,
             answer_mode=request.answer_mode,
-            has_sources=bool(grouped_sources),
+            has_sources=bool(plan.grouped_sources),
         ),
-        history=updated_history,
-        sources=grouped_sources,
+        history=_new_turn(plan.history, plan.message, answer),
+        sources=plan.grouped_sources,
         diagnostics=format_last_trace(),
         trace=trace,
+    )
+
+
+def _ndjson(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False) + "\n"
+
+
+def _chat_done_event(*, answer, summary, confidence_label, followups, history, sources) -> str:
+    return _ndjson(
+        {
+            "type": "done",
+            "answer": answer,
+            "summary": summary,
+            "confidence_label": confidence_label,
+            "followup_suggestions": followups,
+            "history": [m.model_dump() for m in history],
+            "sources": [s.model_dump() for s in sources],
+        }
+    )
+
+
+def chat_stream_service(workspace_id: str, request: ChatRequest, *, user_id: str | None = None):
+    """NDJSON token stream for the assistant (Stage 14).
+
+    Quota is checked at the *route* before the stream starts (so a 402 is a
+    normal JSON response, never a half-printed answer). Usage is metered only
+    after a full successful generation — an aborted/failed stream doesn't
+    charge, so the frontend's fallback to ``/api/chat`` can't double-charge.
+    Short paths (empty / greeting / no-context) emit a single ``done`` event.
+    """
+    plan = _prepare_chat(workspace_id, request)
+
+    if plan.kind == "empty":
+        yield _chat_done_event(
+            answer="", summary="", confidence_label="", followups=[], history=plan.history, sources=[]
+        )
+        return
+
+    if plan.kind in ("greeting", "no_context"):
+        yield _chat_done_event(
+            answer=plan.answer,
+            summary=plan.summary,
+            confidence_label=plan.confidence_label,
+            followups=plan.followup_suggestions,
+            history=_new_turn(plan.history, plan.message, plan.answer),
+            sources=plan.grouped_sources,
+        )
+        return
+
+    llm = runtime.get_llm()
+    parts: list[str] = []
+    try:
+        for token in llm.stream(plan.full_prompt):
+            if token:
+                parts.append(token)
+                yield _ndjson({"type": "token", "text": token})
+    except Exception as error:  # generation failed mid-stream — no metering
+        yield _ndjson({"type": "error", "message": str(error)})
+        return
+
+    answer = "".join(parts).strip()
+    if is_refusal(answer):
+        answer = _format_no_information_message(plan.selected_file)
+
+    # Meter only after the full answer is in hand (skipped on abort/disconnect,
+    # since the generator is closed before reaching here).
+    quota.record_usage(workspace_id, quota.ACTION_CHAT, user_id=user_id, meta={"answer_mode": request.answer_mode})
+
+    yield _chat_done_event(
+        answer=answer,
+        summary=_build_answer_summary(answer),
+        confidence_label=_build_confidence_label(plan.grouped_sources, trace_status="ok"),
+        followups=_build_followup_suggestions(
+            message=plan.message, answer_mode=request.answer_mode, has_sources=bool(plan.grouped_sources)
+        ),
+        history=_new_turn(plan.history, plan.message, answer),
+        sources=plan.grouped_sources,
     )
 
 

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from slowapi import _rate_limit_exceeded_handler
@@ -299,6 +299,25 @@ def summaries(workspace_id: WorkspaceId, request: SummaryRequest):
 @limiter.limit(config.RATE_LIMIT_CHAT)
 def chat(workspace_id: WorkspaceId, request: Request, payload: ChatRequest):
     return services.chat_service(workspace_id, payload)
+
+
+@app.post("/api/chat/stream")
+@limiter.limit(config.RATE_LIMIT_CHAT)
+def chat_stream(
+    workspace_id: WorkspaceId,
+    request: Request,
+    payload: ChatRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Streaming variant (Stage 14): NDJSON ``token`` events then a final
+    ``done`` with sources/confidence/followups/history. Quota is checked here
+    *before* the stream so a 402 is a normal JSON response, not a half-printed
+    answer; usage is metered inside the generator only after a full answer."""
+    quota.check_quota(workspace_id, quota.ACTION_CHAT)
+    return StreamingResponse(
+        services.chat_stream_service(workspace_id, payload, user_id=current_user.id),
+        media_type="application/x-ndjson",
+    )
 
 
 @app.post("/api/exports/summary")

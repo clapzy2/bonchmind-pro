@@ -559,6 +559,90 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
   return (await response.json()) as ChatResponse;
 }
 
+export type ChatStreamHandlers = {
+  onToken: (text: string) => void;
+  onDone: (response: ChatResponse) => void;
+};
+
+/**
+ * Stream a chat answer (Stage 14). Fires ``onToken`` as tokens arrive and
+ * ``onDone`` with the final ChatResponse. Throws ``QuotaError`` on 402 (before
+ * any token — so the UI shows a paywall, not a half-printed answer),
+ * ``UnauthorizedError`` on 401, a ``DOMException`` AbortError when ``signal``
+ * aborts, or a generic ``Error`` if the stream emits an error event. Backend
+ * meters usage only after a full answer, so a caller that falls back to
+ * ``sendChatMessage`` after a *token-less* failure won't double-charge.
+ */
+export async function streamChatMessage(
+  request: ChatRequest,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    credentials: "include",
+    headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  await throwIfQuotaExceeded(response);
+  ensureResponseOk(response, "Chat stream");
+  if (!response.body) {
+    throw new Error("Chat stream failed: no response body");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return;
+    }
+    let event: { type?: string; text?: string; message?: string } & Partial<ChatResponse>;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+    if (event.type === "token") {
+      handlers.onToken(event.text ?? "");
+    } else if (event.type === "done") {
+      handlers.onDone({
+        answer: event.answer ?? "",
+        summary: event.summary ?? "",
+        confidence_label: event.confidence_label ?? "",
+        followup_suggestions: event.followup_suggestions ?? [],
+        history: event.history ?? [],
+        sources: event.sources ?? [],
+        diagnostics: "",
+        trace: null,
+      });
+    } else if (event.type === "error") {
+      throw new Error(event.message || "Chat stream error");
+    }
+  };
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIndex: number;
+    while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      handleLine(line);
+    }
+  }
+  if (buffer.trim()) {
+    handleLine(buffer);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Admin API (superuser-only) — Stage 9b
 // ---------------------------------------------------------------------------

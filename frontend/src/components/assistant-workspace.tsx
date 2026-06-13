@@ -2,10 +2,10 @@
 
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, Loader2, MessageSquareQuote, Paperclip, Send, Sparkles } from "lucide-react";
+import { Bot, Loader2, MessageSquareQuote, Paperclip, Send, Sparkles, Square } from "lucide-react";
 
 import type { ChatMessage, ChatResponse, MaterialInfo } from "@/lib/api";
-import { sendChatMessage } from "@/lib/api";
+import { sendChatMessage, streamChatMessage } from "@/lib/api";
 import { MaterialPicker, SegmentedControl } from "@/components/workspace-controls";
 import { handleAuthError } from "@/lib/handle-auth-error";
 import { notifyUsageChanged, paywallText } from "@/lib/paywall";
@@ -49,9 +49,13 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [lastResponse, setLastResponse] = useState<ChatResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // The answer being typed out by the stream (null = no stream in flight).
+  const [streamingAnswer, setStreamingAnswer] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const historyViewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Aborts the in-flight chat stream (new question / Stop / unmount).
+  const abortRef = useRef<AbortController | null>(null);
 
   const upload = useMaterialOperations({
     onSync: async () => {
@@ -157,7 +161,18 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
       top: viewport.scrollHeight,
       behavior: "smooth",
     });
-  }, [history, isLoading]);
+  }, [history, isLoading, streamingAnswer]);
+
+  // Abort the in-flight stream if the screen unmounts (tab switch).
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  function handleStop() {
+    abortRef.current?.abort();
+  }
 
   async function handleSend() {
     const normalizedMessage = message.trim();
@@ -165,48 +180,116 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
       return;
     }
 
+    // Cancel any in-flight stream before starting a new one.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const sendHistory = history;
+    const request = {
+      message: normalizedMessage,
+      history: sendHistory,
+      selected_file: selectedFile,
+      answer_mode: answerMode,
+    };
+
+    // Optimistically show the user's message + a growing assistant bubble.
+    setHistory([...sendHistory, { role: "user", content: normalizedMessage }]);
+    setMessage("");
+    setStreamingAnswer("");
     setIsLoading(true);
-    setNotice({
-      tone: "info",
-      text: "Ассистент ищет релевантные фрагменты и собирает ответ.",
-    });
+    setNotice({ tone: "info", text: "Ассистент ищет фрагменты и печатает ответ…" });
 
+    let streamed = "";
+    let gotToken = false;
     try {
-      const response = await sendChatMessage({
-        message: normalizedMessage,
-        history,
-        selected_file: selectedFile,
-        answer_mode: answerMode,
-      });
-
-      setHistory(response.history);
-      setLastResponse(response);
-      setMessage("");
-      notifyUsageChanged();
-      setNotice({
-        tone: response.trace?.status === "ok" ? "success" : "warning",
-        text:
-          response.trace?.status === "ok"
-            ? "Ответ готов. Можно сверить источники и задать уточняющий вопрос."
-            : "Ответ получен с предупреждением. Лучше проверить источники и диагностику.",
-      });
+      await streamChatMessage(
+        request,
+        {
+          onToken: (text) => {
+            gotToken = true;
+            streamed += text;
+            setStreamingAnswer(streamed);
+          },
+          onDone: (response) => {
+            setHistory(response.history);
+            setLastResponse(response);
+            setStreamingAnswer(null);
+            notifyUsageChanged();
+            setNotice({
+              tone: "success",
+              text: "Ответ готов. Можно сверить источники и задать уточняющий вопрос.",
+            });
+          },
+        },
+        controller.signal,
+      );
     } catch (error) {
+      // A newer send superseded this one — let the newer stream own the UI.
+      if (abortRef.current !== controller) {
+        return;
+      }
+      // Manual Stop / unmount: keep whatever was already printed.
+      if (error instanceof DOMException && error.name === "AbortError") {
+        if (streamed) {
+          setHistory((prev) => [...prev, { role: "assistant", content: streamed }]);
+        }
+        setStreamingAnswer(null);
+        return;
+      }
       if (handleAuthError(error, router)) return;
       const paywall = paywallText(error);
       if (paywall) {
+        // 402 arrives before any token → roll back the optimistic user message.
+        setHistory(sendHistory);
+        setStreamingAnswer(null);
         notifyUsageChanged();
         setNotice({ tone: "warning", text: paywall });
         return;
       }
-      setNotice({
-        tone: "warning",
-        text:
-          error instanceof Error
-            ? `Не удалось получить ответ: ${error.message}`
-            : "Не удалось получить ответ. Проверьте backend.",
-      });
+      if (gotToken) {
+        // Partial answer already on screen — commit it so it isn't lost.
+        setHistory((prev) => [...prev, { role: "assistant", content: streamed }]);
+        setStreamingAnswer(null);
+        setNotice({ tone: "warning", text: "Соединение прервалось — ответ может быть неполным." });
+        return;
+      }
+      // Failed before any token → fall back to the non-streaming endpoint. The
+      // backend meters only after a full streamed answer, so no double-charge.
+      try {
+        const response = await sendChatMessage(request);
+        setHistory(response.history);
+        setLastResponse(response);
+        setStreamingAnswer(null);
+        notifyUsageChanged();
+        setNotice({
+          tone: response.trace?.status === "ok" ? "success" : "warning",
+          text:
+            response.trace?.status === "ok"
+              ? "Ответ готов. Можно сверить источники и задать уточняющий вопрос."
+              : "Ответ получен с предупреждением.",
+        });
+      } catch (fallbackError) {
+        if (handleAuthError(fallbackError, router)) return;
+        const fallbackPaywall = paywallText(fallbackError);
+        setHistory(sendHistory);
+        setStreamingAnswer(null);
+        setNotice({
+          tone: "warning",
+          text:
+            fallbackPaywall ??
+            (fallbackError instanceof Error
+              ? `Не удалось получить ответ: ${fallbackError.message}`
+              : "Не удалось получить ответ. Проверьте backend."),
+        });
+      }
     } finally {
-      setIsLoading(false);
+      // Only clear loading if this is still the active stream (a newer send may
+      // have taken over).
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setIsLoading(false);
+      }
     }
   }
 
@@ -308,6 +391,28 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
                 </div>
               </div>
             ))}
+
+            {streamingAnswer !== null ? (
+              <div className="flex justify-start">
+                <div className="max-w-[88%] rounded-2xl border border-white/10 bg-[#0d1117] p-4">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-white">
+                    <Bot className="h-4 w-4 text-[var(--source)]" />
+                    BonchMind
+                  </div>
+                  {streamingAnswer ? (
+                    <div className="whitespace-pre-wrap text-sm leading-7 text-slate-200">
+                      {streamingAnswer}
+                      <span className="ml-0.5 inline-block animate-pulse">▋</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-muted">
+                      <Loader2 className="h-4 w-4 animate-spin text-brand" />
+                      Печатаю…
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="bm-chat-composer mt-6 border-t border-white/10 pt-5">
@@ -352,6 +457,16 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
                 {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 {isLoading ? "Отвечаю..." : "Отправить"}
               </button>
+              {isLoading ? (
+                <button
+                  className="bm-button-secondary h-12 px-4 text-sm font-semibold text-white"
+                  type="button"
+                  onClick={handleStop}
+                >
+                  <Square className="h-4 w-4" />
+                  Стоп
+                </button>
+              ) : null}
               <p className="text-sm text-muted">
                 Скрепка — чтобы загрузить новый материал прямо отсюда.
               </p>

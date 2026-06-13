@@ -96,3 +96,22 @@ def test_deactivated_user_is_rejected_on_live_session(authed_client):
 
     resp = authed_client.get("/api/auth/me")
     assert resp.status_code == 401
+
+
+def test_token_issued_before_tokens_valid_after_is_revoked(authed_client):
+    """A JWT older than the user's tokens_valid_after is rejected — this is what
+    forces a fresh login after a ban (Stage 13)."""
+    from datetime import datetime, timedelta, timezone
+
+    assert authed_client.get("/api/auth/me").status_code == 200
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == "tester@example.com").one()
+        # Revoke everything issued before "now + 1h" → the current token is older.
+        user.tokens_valid_after = datetime.now(timezone.utc) + timedelta(hours=1)
+        db.commit()
+    finally:
+        db.close()
+
+    assert authed_client.get("/api/auth/me").status_code == 401

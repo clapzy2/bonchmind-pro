@@ -211,6 +211,19 @@ def test_admin_ban_and_unban(superuser_client):
     assert _user_field("banme@example.com", "is_active") is True
 
 
+def test_ban_stamps_tokens_valid_after(superuser_client):
+    """Banning records tokens_valid_after (revokes existing sessions); un-ban
+    leaves it set so the old token stays dead and a fresh login is required."""
+    target = _seed_user("revoke@example.com")
+
+    superuser_client.post(f"/api/admin/users/{target}/active", json={"is_active": False})
+    assert _user_field("revoke@example.com", "tokens_valid_after") is not None
+
+    superuser_client.post(f"/api/admin/users/{target}/active", json={"is_active": True})
+    # Un-ban does NOT clear it — old tokens (iat < stamp) remain revoked.
+    assert _user_field("revoke@example.com", "tokens_valid_after") is not None
+
+
 def test_admin_cannot_modify_self(superuser_client):
     admin_id = _user_field("admin@example.com", "id")
     assert superuser_client.post(f"/api/admin/users/{admin_id}/role", json={"is_superuser": False}).status_code == 400

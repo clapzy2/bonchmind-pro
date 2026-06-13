@@ -288,7 +288,7 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
             {loading ? "Загружаю события…" : "Событий пока нет."}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-h-[360px] overflow-auto assistant-scroll">
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide muted">
@@ -350,7 +350,7 @@ export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
             {loading ? "Загружаю пользователей…" : "Пользователей нет."}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-h-[420px] overflow-auto assistant-scroll">
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide muted">

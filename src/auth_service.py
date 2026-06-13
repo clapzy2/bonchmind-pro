@@ -7,6 +7,7 @@ the same shape.
 
 from __future__ import annotations
 
+from datetime import timezone
 from typing import Annotated
 
 from fastapi import Cookie, Depends, Header, HTTPException, Response, status
@@ -209,6 +210,22 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="user_inactive",
         )
+
+    # Session revocation (Stage 13): reject tokens issued before the user's
+    # ``tokens_valid_after`` (stamped on ban). This is what forces a fresh login
+    # after a ban → un-ban cycle instead of the old cookie silently resuming.
+    issued_at = payload.get("iat")
+    threshold = user.tokens_valid_after
+    if threshold is not None and issued_at is not None:
+        # SQLite reads the timestamp back as naive; we always store UTC, so
+        # treat a naive value as UTC before comparing to the JWT's (UTC) iat.
+        if threshold.tzinfo is None:
+            threshold = threshold.replace(tzinfo=timezone.utc)
+        if int(issued_at) < int(threshold.timestamp()):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="session_revoked",
+            )
     return user
 
 

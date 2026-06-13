@@ -1195,6 +1195,12 @@ def admin_set_user_active(*, actor_id: str, target_id: str, is_active: bool) -> 
             if _active_superuser_count(db) <= 1:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="last_superuser")
         target.is_active = is_active
+        if not is_active:
+            # Revoke existing sessions so the old cookie can't resume after an
+            # un-ban — the user must log in fresh (Stage 13).
+            from datetime import datetime, timezone
+
+            target.tokens_valid_after = datetime.now(timezone.utc)
         db.commit()
         db.refresh(target)
         return _admin_user_out(target)

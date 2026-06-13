@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { AuthForm } from "@/components/auth-form";
 import { useAuth } from "@/lib/auth-context";
-import { EmailConflictError, ValidationError } from "@/lib/api";
+import { EmailConflictError, RateLimitError, ValidationError } from "@/lib/api";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -43,7 +43,11 @@ export default function RegisterPage() {
       // signed in — go straight to the workspace.
       router.replace("/");
     } catch (err) {
-      if (err instanceof EmailConflictError || err instanceof ValidationError) {
+      if (
+        err instanceof EmailConflictError ||
+        err instanceof ValidationError ||
+        err instanceof RateLimitError
+      ) {
         setError(err.message);
       } else {
         setError("Не удалось зарегистрироваться. Попробуйте ещё раз.");

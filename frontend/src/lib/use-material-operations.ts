@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
+  cancelMaterialOperation,
   deleteMaterial,
   getMaterialProgress,
   reindexLibrary,
@@ -33,11 +34,23 @@ import { handleAuthError } from "@/lib/handle-auth-error";
  *    operation's ``onComplete`` with the canonical material name so the
  *    caller can auto-select the freshly indexed file.
  *
- * F5 during an operation is NOT resumed: the hook starts idle on mount and
- * does not probe ``/api/materials/progress`` until a new ``run`` begins. The
- * backend job keeps going; the UI just won't reattach to it. Re-opening the
- * Library and starting any action re-syncs the list.
+ * F5 during an operation IS resumed (Stage 9a upload-ux): on mount the hook
+ * probes ``/api/materials/progress`` once and, if the workspace has an active
+ * job, reattaches to it (the progress bar continues, the list refreshes when
+ * it finishes). ``cancel`` requests cooperative cancellation of the running
+ * job; the poll then reflects the cancelled state.
  */
+
+const RESUMABLE_OPERATIONS: ReadonlyArray<RunArgs["operation"]> = [
+  "upload",
+  "delete",
+  "reindex_material",
+  "reindex_library",
+];
+
+function isResumableOperation(operation: string): operation is RunArgs["operation"] {
+  return (RESUMABLE_OPERATIONS as readonly string[]).includes(operation);
+}
 
 export type MaterialOperationNotice = {
   tone: "info" | "warning" | "success";
@@ -121,15 +134,21 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
       }
 
       const pending = pendingRef.current;
-      const ok = progress.phase !== "error";
+      const isCancelled = progress.phase === "cancelled";
+      const ok = progress.phase !== "error" && !isCancelled;
 
       setNotice({
-        tone: ok ? "success" : "warning",
+        tone: isCancelled ? "info" : ok ? "success" : "warning",
         text:
           progress.message ||
-          (ok ? "Операция с библиотекой завершена." : "Операция с библиотекой завершилась с ошибкой."),
+          (isCancelled
+            ? "Операция отменена."
+            : ok
+              ? "Операция с библиотекой завершена."
+              : "Операция с библиотекой завершилась с ошибкой."),
       });
 
+      // Only auto-select on a successful finish — never after error/cancel.
       if (ok && pending?.onComplete && pending.materialName) {
         pending.onComplete(pending.materialName);
       }
@@ -147,6 +166,40 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
       cancelled = true;
     };
   }, [activeOperation, progress, onSync]);
+
+  // Resume an in-flight job after F5 (Stage 9a upload-ux): probe the server's
+  // per-workspace progress once on mount and reattach if something is active.
+  // No onComplete after a reload (we can't recover the original callback) — the
+  // list just refreshes when the job finishes.
+  useEffect(() => {
+    let cancelled = false;
+    getMaterialProgress()
+      .then((snapshot) => {
+        if (cancelled || !snapshot.active || !isResumableOperation(snapshot.operation)) {
+          return;
+        }
+        pendingRef.current = null;
+        // External-system (server progress) reattach, not derived render state.
+        setProgress(snapshot);
+        setActiveOperation(snapshot.operation);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const cancel = useCallback(async () => {
+    setNotice({ tone: "info", text: "Отменяю операцию…" });
+    try {
+      await cancelMaterialOperation();
+    } catch (err) {
+      if (handleAuthError(err, router)) {
+        return;
+      }
+      // Other errors are non-fatal — the poll reflects the real state.
+    }
+  }, [router]);
 
   const run = useCallback(
     async (args: RunArgs) => {
@@ -278,5 +331,6 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
     deleteFile,
     reindexFile,
     reindexAll,
+    cancel,
   };
 }

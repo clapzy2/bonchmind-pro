@@ -200,6 +200,18 @@ export class EmailConflictError extends Error {
 }
 
 /**
+ * Raised when the backend returns 429 (rate limit, Stage 9a). Lets the auth
+ * forms show "too many attempts, wait a moment" instead of a misleading
+ * "wrong password".
+ */
+export class RateLimitError extends Error {
+  constructor(message = "Слишком много попыток. Подождите минуту и попробуйте снова.") {
+    super(message);
+    this.name = "RateLimitError";
+  }
+}
+
+/**
  * Raised by auth helpers when the backend rejects the payload with 422
  * (Pydantic validation) or another structured 4xx. The message is the
  * human-readable detail extracted from the response body so the form can
@@ -363,6 +375,16 @@ export async function uploadMaterial(file: File): Promise<MaterialActionResponse
   return (await response.json()) as MaterialActionResponse;
 }
 
+export async function cancelMaterialOperation(): Promise<MaterialActionResponse> {
+  const response = await fetch("/api/materials/cancel", {
+    method: "POST",
+    credentials: "include",
+  });
+
+  ensureResponseOk(response, "Cancel");
+  return (await response.json()) as MaterialActionResponse;
+}
+
 export async function deleteMaterial(fileName: string): Promise<MaterialActionResponse> {
   const response = await fetch(`/api/materials/${encodeURIComponent(fileName)}`, {
     method: "DELETE",
@@ -487,6 +509,9 @@ export async function registerUser(payload: RegisterPayload): Promise<UserOut> {
   if (response.status === 409) {
     throw new EmailConflictError();
   }
+  if (response.status === 429) {
+    throw new RateLimitError();
+  }
   if (response.status === 422 || response.status === 400) {
     const detail = await extractDetailMessage(response);
     throw new ValidationError(detail ?? "Проверьте поля формы и попробуйте ещё раз.");
@@ -519,6 +544,9 @@ export async function loginUser(payload: LoginPayload): Promise<UserOut> {
 
   if (response.status === 401) {
     throw new InvalidCredentialsError();
+  }
+  if (response.status === 429) {
+    throw new RateLimitError();
   }
   if (response.status === 422 || response.status === 400) {
     const detail = await extractDetailMessage(response);

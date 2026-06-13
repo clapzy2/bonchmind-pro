@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { AuthForm } from "@/components/auth-form";
 import { useAuth } from "@/lib/auth-context";
-import { InvalidCredentialsError, ValidationError } from "@/lib/api";
+import { InvalidCredentialsError, RateLimitError, ValidationError } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -31,7 +31,11 @@ export default function LoginPage() {
       await login({ email: email.trim(), password });
       router.replace("/");
     } catch (err) {
-      if (err instanceof InvalidCredentialsError || err instanceof ValidationError) {
+      if (
+        err instanceof InvalidCredentialsError ||
+        err instanceof ValidationError ||
+        err instanceof RateLimitError
+      ) {
         setError(err.message);
       } else {
         setError("Не удалось войти. Попробуйте ещё раз.");

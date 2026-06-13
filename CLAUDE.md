@@ -98,4 +98,5 @@ For Ollama: `LLM_MODE=ollama` + a running local Ollama on `:11434`. `JWT_SECRET_
 
 ## Out of scope for now
 
-- Multi-file upload, light theme, Settings content, admin diagnostics UI, JSON diagnostics export, Docker/Postgres deploy. These are the known gaps documented in `README.md` — don't fix them unless a stage explicitly takes them on.
+- Multi-file upload, light theme, admin diagnostics UI + roles (Stage 9), mobile/responsive polish, English UI (i18n), pgvector. These are the consciously-deferred gaps documented in `README.md` — don't fix them unless a stage explicitly takes them on.
+- Done since this file was first written: Docker/Postgres deploy (Stage 8), Settings/Quality tabs were removed rather than built (Stage 7d). The quality-narrative logic lives unused in `frontend/src/components/run-diagnostics.tsx`, ready to re-wire admin-gated in Stage 9.

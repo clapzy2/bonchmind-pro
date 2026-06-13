@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 
-ADMIN_PATHS = ["/api/admin/stats", "/api/admin/audit"]
+ADMIN_PATHS = ["/api/admin/stats", "/api/admin/audit", "/api/admin/users"]
 
 
 @pytest.mark.parametrize("path", ADMIN_PATHS)
@@ -134,3 +134,109 @@ def test_admin_audit_limit_is_clamped(superuser_client):
     resp = superuser_client.get("/api/admin/audit", params={"limit": 100_000})
     assert resp.status_code == 200
     assert len(resp.json()["events"]) >= 5
+
+
+# ---------------------------------------------------------------------------
+# User management (Stage 13-2)
+# ---------------------------------------------------------------------------
+
+
+def _seed_user(email="target@example.com"):
+    """Create a regular user directly (no HTTP client → no cookie clobber)."""
+    from src import auth_service
+    from src.auth_models import UserCreate
+    from src.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return auth_service.register_user(
+            db, UserCreate(email=email, password="password12345")
+        ).id
+    finally:
+        db.close()
+
+
+def _user_field(email, field):
+    from src.db import SessionLocal
+    from src.db_models import User
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).one()
+        return getattr(user, field)
+    finally:
+        db.close()
+
+
+def test_admin_users_lists_everyone(superuser_client):
+    _seed_user("target@example.com")
+    resp = superuser_client.get("/api/admin/users")
+    assert resp.status_code == 200
+    users = resp.json()["users"]
+    emails = {u["email"] for u in users}
+    assert {"admin@example.com", "target@example.com"} <= emails
+    sample = next(u for u in users if u["email"] == "target@example.com")
+    assert set(sample) >= {"id", "email", "is_active", "is_superuser", "plan", "created_at"}
+
+
+def test_admin_user_mutations_forbidden_for_regular_user(authed_client):
+    target = _seed_user("victim@example.com")
+    assert authed_client.post(f"/api/admin/users/{target}/role", json={"is_superuser": True}).status_code == 403
+    assert authed_client.post(f"/api/admin/users/{target}/active", json={"is_active": False}).status_code == 403
+
+
+def test_admin_promote_and_demote(superuser_client):
+    target = _seed_user("promoteme@example.com")
+
+    resp = superuser_client.post(f"/api/admin/users/{target}/role", json={"is_superuser": True})
+    assert resp.status_code == 200
+    assert resp.json()["is_superuser"] is True
+    assert _user_field("promoteme@example.com", "is_superuser") is True
+
+    resp = superuser_client.post(f"/api/admin/users/{target}/role", json={"is_superuser": False})
+    assert resp.status_code == 200
+    assert _user_field("promoteme@example.com", "is_superuser") is False
+
+
+def test_admin_ban_and_unban(superuser_client):
+    target = _seed_user("banme@example.com")
+
+    resp = superuser_client.post(f"/api/admin/users/{target}/active", json={"is_active": False})
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is False
+    assert _user_field("banme@example.com", "is_active") is False
+
+    resp = superuser_client.post(f"/api/admin/users/{target}/active", json={"is_active": True})
+    assert resp.status_code == 200
+    assert _user_field("banme@example.com", "is_active") is True
+
+
+def test_admin_cannot_modify_self(superuser_client):
+    admin_id = _user_field("admin@example.com", "id")
+    assert superuser_client.post(f"/api/admin/users/{admin_id}/role", json={"is_superuser": False}).status_code == 400
+    assert superuser_client.post(f"/api/admin/users/{admin_id}/active", json={"is_active": False}).status_code == 400
+
+
+def test_admin_unknown_user_is_404(superuser_client):
+    assert superuser_client.post("/api/admin/users/nope/role", json={"is_superuser": True}).status_code == 404
+
+
+def test_last_superuser_guard_blocks_demote_and_ban(superuser_client):
+    """Service-level: the sole active superuser can't be demoted/banned even by a
+    different actor. (Unreachable via the gated endpoint thanks to the
+    self-guard, so tested directly — defense in depth.)"""
+    from fastapi import HTTPException
+
+    from src import app_services
+
+    admin_id = _user_field("admin@example.com", "id")  # the only superuser
+
+    with pytest.raises(HTTPException) as demote:
+        app_services.admin_set_user_role(actor_id="someone-else", target_id=admin_id, is_superuser=False)
+    assert demote.value.status_code == 400
+    assert demote.value.detail == "last_superuser"
+
+    with pytest.raises(HTTPException) as ban:
+        app_services.admin_set_user_active(actor_id="someone-else", target_id=admin_id, is_active=False)
+    assert ban.value.status_code == 400
+    assert ban.value.detail == "last_superuser"

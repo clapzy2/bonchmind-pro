@@ -615,6 +615,57 @@ export async function getAuditEvents(limit = 50): Promise<AuditEvent[]> {
   return data.events;
 }
 
+export type AdminUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  plan: string;
+  created_at: string;
+};
+
+/** All users for the superuser user-management table (Stage 13). */
+export async function getAdminUsers(): Promise<AdminUser[]> {
+  const response = await fetch(apiUrl("/api/admin/users"), {
+    cache: "no-store",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  ensureResponseOk(response, "Admin users");
+  const data = (await response.json()) as { users: AdminUser[] };
+  return data.users;
+}
+
+async function postAdminUserAction(path: string, body: object, action: string): Promise<AdminUser> {
+  const response = await fetch(apiUrl(path), {
+    method: "POST",
+    credentials: "include",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  ensureResponseOk(response, action);
+  return (await response.json()) as AdminUser;
+}
+
+/** Promote/demote a user (set is_superuser). Superuser-only. */
+export async function setUserRole(userId: string, isSuperuser: boolean): Promise<AdminUser> {
+  return postAdminUserAction(
+    `/api/admin/users/${encodeURIComponent(userId)}/role`,
+    { is_superuser: isSuperuser },
+    "Set role",
+  );
+}
+
+/** Ban/unban a user (set is_active). Superuser-only. */
+export async function setUserActive(userId: string, isActive: boolean): Promise<AdminUser> {
+  return postAdminUserAction(
+    `/api/admin/users/${encodeURIComponent(userId)}/active`,
+    { is_active: isActive },
+    "Set active",
+  );
+}
+
 /** Latest raw run diagnostics text (superuser-only). Empty string if none. */
 export async function getLatestDiagnostics(): Promise<string> {
   const response = await fetch(apiUrl("/api/diagnostics/latest"), {

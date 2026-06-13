@@ -46,7 +46,11 @@ from src.rate_limit import limiter
 from src.db import get_db
 from src.db_models import User
 from src.api_models import (
+    AdminActiveUpdate,
+    AdminRoleUpdate,
     AdminStats,
+    AdminUserOut,
+    AdminUsersResponse,
     AuditEventOut,
     AuditLogResponse,
     BillingMeResponse,
@@ -342,6 +346,54 @@ def admin_audit(limit: int = 50):
 def admin_stats():
     """Instance-wide counts (users / workspaces / documents / audit events)."""
     return services.get_admin_stats()
+
+
+@app.get("/api/admin/users", response_model=AdminUsersResponse, dependencies=_ADMIN)
+def admin_users():
+    """All users for the superuser user-management table (Stage 13)."""
+    return services.list_admin_users()
+
+
+@app.post("/api/admin/users/{user_id}/role", response_model=AdminUserOut, dependencies=_ADMIN)
+def admin_user_role(
+    user_id: str,
+    payload: AdminRoleUpdate,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Promote/demote a user. Self-guard + last-superuser guard live in the
+    service (400). 401 anon / 403 non-superuser via _ADMIN."""
+    result = services.admin_set_user_role(
+        actor_id=current_user.id, target_id=user_id, is_superuser=payload.is_superuser
+    )
+    audit_service.record(
+        audit_service.ACTION_PROMOTE if payload.is_superuser else audit_service.ACTION_DEMOTE,
+        user_id=current_user.id,
+        target=user_id,
+        ip=_client_ip(request),
+    )
+    return result
+
+
+@app.post("/api/admin/users/{user_id}/active", response_model=AdminUserOut, dependencies=_ADMIN)
+def admin_user_active(
+    user_id: str,
+    payload: AdminActiveUpdate,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Ban/unban a user (immediate — a ban kills the live session via
+    get_current_user). Same guards as the role endpoint."""
+    result = services.admin_set_user_active(
+        actor_id=current_user.id, target_id=user_id, is_active=payload.is_active
+    )
+    audit_service.record(
+        audit_service.ACTION_UNBAN if payload.is_active else audit_service.ACTION_BAN,
+        user_id=current_user.id,
+        target=user_id,
+        ip=_client_ip(request),
+    )
+    return result
 
 
 @app.post("/api/admin/reconcile", response_model=ReconcileResponse, dependencies=_ADMIN)

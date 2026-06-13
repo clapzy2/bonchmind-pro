@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getMaterials, getSystemStatus, type ApiHealth, type MaterialInfo, type SummaryResponse, type SystemStatus } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 import { Sidebar } from "@/components/sidebar";
 import { SourcePanel } from "@/components/source-panel";
+import { AdminWorkspace } from "@/components/admin-workspace";
 import { AssistantWorkspace } from "@/components/assistant-workspace";
 import { MaterialsWorkspace } from "@/components/materials-workspace";
 import { SummaryWorkspace } from "@/components/summary-workspace";
@@ -20,10 +22,13 @@ type AppShellProps = {
 const ACTIVE_SECTION_KEY = "bonchmind-active-section";
 // Stale localStorage values for sections removed in Stage 7d ("quality",
 // "settings") fail this check and fall back to the default "assistant".
+// "admin" is valid for everyone here, but a non-superuser is bounced off it
+// at render time (see resolvedSection below).
 const VALID_SECTIONS: readonly WorkspaceSection[] = [
   "summary",
   "assistant",
   "materials",
+  "admin",
 ];
 
 function isWorkspaceSection(value: unknown): value is WorkspaceSection {
@@ -51,6 +56,8 @@ function getVisibleMaterials(materials: MaterialInfo[]): MaterialInfo[] {
 }
 
 export function AppShell({ health, materials, status }: AppShellProps) {
+  const { user } = useAuth();
+  const isSuperuser = Boolean(user?.is_superuser);
   const [lastRun, setLastRun] = useState<SummaryResponse | null>(null);
   const [activeSection, setActiveSection] = useState<WorkspaceSection>(() => {
     // SSR-safe initial read of the persisted tab; client-only because the
@@ -87,30 +94,40 @@ export function AppShell({ health, materials, status }: AppShellProps) {
     setStatusState(nextStatus);
   }, []);
 
+  // A non-superuser must never see the admin screen even if "admin" was
+  // persisted while they had elevated rights (or via a hand-edited
+  // localStorage). The backend gates /api/admin/* independently; this is just
+  // the UI guard.
+  const resolvedSection: WorkspaceSection =
+    activeSection === "admin" && !isSuperuser ? "assistant" : activeSection;
+
   return (
     <div className="app-shell">
       <Sidebar
-        activeSection={activeSection}
+        activeSection={resolvedSection}
         materials={materialsState}
+        isSuperuser={isSuperuser}
         onSectionChange={setActiveSection}
       />
       <div className="main-area">
-        <Topbar activeSection={activeSection} health={health} />
+        <Topbar activeSection={resolvedSection} health={health} />
         <div className="workspace">
-          {activeSection === "summary" ? (
+          {resolvedSection === "summary" ? (
             <SummaryWorkspace
               materials={materialsState}
               onResult={setLastRun}
               onLibraryChange={refreshLibraryState}
             />
-          ) : activeSection === "assistant" ? (
+          ) : resolvedSection === "assistant" ? (
             <AssistantWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
+          ) : resolvedSection === "admin" ? (
+            <AdminWorkspace />
           ) : (
             <MaterialsWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
           )}
         </div>
       </div>
-      <SourcePanel activeSection={activeSection} status={statusState} lastRun={lastRun} />
+      <SourcePanel activeSection={resolvedSection} status={statusState} lastRun={lastRun} />
     </div>
   );
 }

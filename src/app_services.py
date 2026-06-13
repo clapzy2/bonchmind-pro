@@ -25,10 +25,13 @@ without going through the Gradio entrypoint (Stage 6d).
 import os
 from threading import Lock, Thread
 
+from sqlalchemy import func, select
+
 import config
 from src import document_service, knowledge_base, runtime
 from src import summary_engine
 from src.api_models import (
+    AdminStats,
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -1060,3 +1063,30 @@ def get_latest_diagnostics_text():
 
 def get_latest_diagnostics_json():
     return get_last_trace()
+
+
+def get_admin_stats() -> AdminStats:
+    """System-wide counts for the superuser admin overview (Stage 9b).
+
+    Deliberately *not* workspace-scoped: this is superuser-only data covering
+    every user, workspace, document and audit event in the instance. Uses
+    ``COUNT(*)`` rather than loading rows so the numbers stay cheap as the
+    tables grow. Opens its own short-lived session.
+    """
+    # Imported lazily to keep the module's top-level imports focused on the
+    # RAG/summary path; the admin stats are a small side feature.
+    from src.db_models import AuditEvent, Document, User, Workspace
+
+    db = SessionLocal()
+    try:
+        def _count(model) -> int:
+            return int(db.scalar(select(func.count()).select_from(model)) or 0)
+
+        return AdminStats(
+            users=_count(User),
+            workspaces=_count(Workspace),
+            documents=_count(Document),
+            audit_events=_count(AuditEvent),
+        )
+    finally:
+        db.close()

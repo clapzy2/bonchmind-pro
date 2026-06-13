@@ -26,6 +26,10 @@ const sectionTitles: Record<WorkspaceSection, { label: string; subtitle: string 
     label: "Библиотека материалов",
     subtitle: "Живая структура базы знаний",
   },
+  admin: {
+    label: "Администрирование",
+    subtitle: "Только для администратора",
+  },
 };
 
 export function Topbar({ activeSection, health }: TopbarProps) {

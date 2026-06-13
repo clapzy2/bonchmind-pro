@@ -429,15 +429,23 @@ PR не должен попадать в main, если CI красный.
 
 ## Безопасность
 
-Важные принципы:
+**Изоляция и auth:**
 
-* пользовательские данные разделены по workspace;
-* backend получает `workspace_id` из авторизации;
-* frontend не выбирает workspace вручную;
-* старый Gradio UI удалён;
-* `DEFAULT_WORKSPACE_ID` удалён;
-* прямые runtime-вызовы без workspace больше не допускаются;
-* отсутствие `workspace_id` в KB/Summary API должно приводить к ошибке на уровне Python, а не к тихому fallback.
+* пользовательские данные разделены по workspace; `workspace_id` всегда из авторизации, а не из запроса;
+* пароли хешируются bcrypt; JWT хранится в HttpOnly-cookie (`SameSite=Lax`), в браузерном storage токена нет;
+* отсутствие `workspace_id` в KB/Summary API — ошибка на уровне Python, а не тихий fallback;
+* удаление материала убирает файл, чанки ChromaDB и строку БД, всё в рамках workspace.
+
+**Hardening (Stage 9a):**
+
+* **rate limiting** по IP на `/api/auth/login`, `/register`, `/api/chat`, `/api/materials/upload` (превышение → `429`);
+* **защита от upload-DoS**: ранняя проверка `Content-Length` + потоковое чтение с лимитом → файл больше `MAX_UPLOAD_BYTES` получает `413`, не читаясь целиком в память;
+* **login timing**: для несуществующего email всё равно выполняется bcrypt-verify (нет таймингового определения существования аккаунта);
+* **audit-log** (`audit_events`) важных действий: `login`, `upload`, `delete`, `reindex`;
+* `/api/diagnostics/*` — только для superuser;
+* `AUTH_COOKIE_SECURE=true` обязателен в prod за HTTPS (backend предупреждает в логах, если на Postgres-развёртывании он `false`).
+
+**Отложено (future):** роли кроме superuser + admin UI, отзыв/refresh JWT, CSRF-токен (сейчас прикрыто `SameSite=Lax`), проверка email.
 
 ---
 

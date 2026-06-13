@@ -147,3 +147,27 @@ class Document(Base):
     )
 
     workspace: Mapped["Workspace"] = relationship(back_populates="documents")
+
+
+class AuditEvent(Base):
+    """Append-only audit trail for security-relevant actions (Stage 9a).
+
+    Records ``login`` / ``upload`` / ``delete`` / ``reindex``. Deliberately has
+    NO foreign keys: an audit record must survive deletion of the user or
+    workspace it refers to, so ``user_id`` / ``workspace_id`` are plain columns.
+    Writes are best-effort and must never break the action they describe.
+    """
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    action: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    # Actor / workspace are nullable so anonymous or workspace-less events
+    # (e.g. a failed login) can still be recorded.
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    target: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    ip: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, index=True
+    )

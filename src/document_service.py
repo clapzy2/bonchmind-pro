@@ -229,8 +229,9 @@ def delete_document(db: Session, workspace_id: str, document_id: str) -> bool:
     try:
         kb.remove_chunks(workspace_id, document_id)
     except Exception:
-        # Best-effort: don't block delete on a Chroma hiccup. The Stage 4
-        # cleanup task can scrub orphan chunks.
+        # Best-effort: don't block delete on a Chroma hiccup. Any orphan chunks
+        # this leaves behind are reclaimed by the Stage 9c reconciler
+        # (``src.maintenance.reconcile_*`` / superuser ``POST /api/admin/reconcile``).
         pass
 
     _safe_unlink(doc.stored_path)

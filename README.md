@@ -451,13 +451,14 @@ PR не должен попадать в main, если CI красный.
 
 ## Администрирование
 
-Раздел **«Админ»** (Stage 9b) виден только суперпользователю: обычный пользователь не видит его в сайдбаре, а прямые запросы к `/api/admin/*` получают `403`. Внутри — только чтение:
+Раздел **«Админ»** (Stage 9b) виден только суперпользователю: обычный пользователь не видит его в сайдбаре, а прямые запросы к `/api/admin/*` получают `403`. Внутри:
 
 * **статистика инстанса** — число пользователей, workspace, документов и событий аудита;
-* **журнал аудита** — последние события `login` / `upload` / `delete` / `reindex` (время, действие, пользователь, объект, IP);
-* **диагностика** — сырой trace последнего запуска (раскрывающийся блок).
+* **журнал аудита** — последние события `login` / `upload` / `delete` / `reindex` / `reconcile` (время, действие, пользователь, объект, IP);
+* **диагностика** — сырой trace последнего запуска (раскрывающийся блок);
+* **«Сверить базу»** (Stage 9c) — единственное действие на запись: сверяет векторную базу (ChromaDB) с таблицей `Document` и удаляет осиротевшие фрагменты — те, у которых больше нет материала в библиотеке (`POST /api/admin/reconcile`). Идемпотентно, по всем workspace, строго в их границах. Чинит рассинхрон вида «в Библиотеке 0 материалов, а в индексе ещё что-то лежит» (после сбоя best-effort удаления или сброса dev-БД поверх сохранённого Chroma-стора).
 
-Управление ролями, promote/demote и бан пользователей сознательно вне scope Stage 9b.
+Управление ролями, promote/demote и бан пользователей сознательно вне scope.
 
 ### Назначение первого суперпользователя
 
@@ -501,7 +502,7 @@ docker compose exec api python -c "from src.db import SessionLocal; from src.db_
 * **Stage 1–6 — Multi-user ядро:** auth, workspace, изоляция, удаление Gradio/`DEFAULT_WORKSPACE_ID`.
 * **Stage 7 — Product polish:** Assistant-first, чистка экранов, inline upload, Markdown, F5-persist.
 * **Stage 8 — Production setup:** Docker / docker-compose, PostgreSQL, миграции в Docker, тома.
-* **Stage 9 — Security / Admin:** rate limits, audit-лог, anti-enumeration, upload-DoS guard (9a); superuser-экран «Админ» — статистика, журнал аудита, диагностика (9b).
+* **Stage 9 — Security / Admin:** rate limits, audit-лог, anti-enumeration, upload-DoS guard (9a); superuser-экран «Админ» — статистика, журнал аудита, диагностика (9b); орфан-скраббер — сверка ChromaDB ↔ `Document`, кнопка «Сверить базу» (9c).
 * **Stage 10 — Documentation:** ARCHITECTURE.md, DEMO.md, финальный README.
 
 ### Дальше

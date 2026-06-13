@@ -70,6 +70,7 @@ Plus CI green (`.github/workflows/ci.yml`: backend tests + alembic upgrade check
 | Frontend API client + auth helpers | `frontend/src/lib/api.ts`, `frontend/src/lib/handle-auth-error.ts` |
 | Workspaces (UI screens) | `frontend/src/components/{assistant,summary,materials,admin}-workspace.tsx` |
 | Audit log (write + read) | `src/audit_service.py` (`record`, `list_recent`); superuser admin endpoints in `api_app.py` |
+| Orphan-chunk reconcile (KB↔Document) | `src/maintenance.py` (`reconcile_*`) + `knowledge_base.remove_orphan_chunks`; `POST /api/admin/reconcile` |
 
 ## Test setup
 
@@ -100,4 +101,4 @@ For Ollama: `LLM_MODE=ollama` + a running local Ollama on `:11434`. `JWT_SECRET_
 ## Out of scope for now
 
 - Multi-file upload, light theme, finer roles than `is_superuser` (per-workspace roles, promote/demote, ban, rate-limit tuning from the UI), mobile/responsive polish, English UI (i18n), pgvector. These are the consciously-deferred gaps documented in `README.md` — don't fix them unless a stage explicitly takes them on.
-- Done since this file was first written: Docker/Postgres deploy (Stage 8), Settings/Quality tabs were removed rather than built (Stage 7d), security hardening + audit log (Stage 9a), and the superuser **Admin** screen — stats + audit log + diagnostics (Stage 9b, `frontend/src/components/admin-workspace.tsx`). `run-diagnostics.tsx` is now wired into the admin screen.
+- Done since this file was first written: Docker/Postgres deploy (Stage 8), Settings/Quality tabs were removed rather than built (Stage 7d), security hardening + audit log (Stage 9a), the superuser **Admin** screen — stats + audit log + diagnostics (Stage 9b, `frontend/src/components/admin-workspace.tsx`), and the orphan-chunk **reconciler** — `src/maintenance.py` + `POST /api/admin/reconcile`, surfaced as the "Сверить базу" admin button (Stage 9c). `run-diagnostics.tsx` is now wired into the admin screen.

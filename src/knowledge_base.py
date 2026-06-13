@@ -15,6 +15,10 @@ from src.document_loader import load_file
 from src.text_processing import clean_sections, detect_sections, get_splitter, is_user_visible_section
 
 
+class IndexingCancelled(RuntimeError):
+    """Raised inside ``add_book`` when a ``cancel_check`` requests cancellation
+    (Stage 9a). The caller is responsible for rolling back partial state."""
+
 
 # Основной класс - База Знаний
 
@@ -108,6 +112,7 @@ class KnowledgeBase:
         document_id=None,
         original_name=None,
         progress_callback=None,
+        cancel_check=None,
     ):
         """Загрузить файл, разбить на чанки, добавить в ChromaDB.
 
@@ -203,6 +208,12 @@ class KnowledgeBase:
         # Добавляем в ChromaDB пачками по 32
         batch_size = getattr(config, "INDEX_BATCH_SIZE", 64)
         for i in range(0, len(new_chunks), batch_size):
+            # Cooperative cancellation checkpoint (Stage 9a): between batches we
+            # can abort cleanly. Anything already written this run is rolled
+            # back by the caller (document_service.create_document). Note this
+            # cannot interrupt model loading or a single embed call.
+            if cancel_check is not None and cancel_check():
+                raise IndexingCancelled(effective_document_id)
             batch = new_chunks[i:i+batch_size]
             b_ids = new_ids[i:i+batch_size]
             b_metas = new_metas[i:i+batch_size]

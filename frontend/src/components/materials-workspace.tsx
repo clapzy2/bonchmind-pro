@@ -9,6 +9,7 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 
 import type { MaterialInfo } from "@/lib/api";
@@ -181,18 +182,36 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
           </button>
         </div>
 
-        {(progress.active || progress.phase === "done" || progress.phase === "error") ? (
+        {(progress.active || progress.phase === "done" || progress.phase === "error" || progress.phase === "cancelled") ? (
           <div className="mt-5 rounded-xl border border-white/10 bg-[#0f1319] p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-sm font-semibold text-white">
-                  {progress.active ? "Индексация в процессе" : progress.phase === "error" ? "Операция завершилась с ошибкой" : "Последняя операция завершена"}
+                  {progress.active
+                    ? "Индексация в процессе"
+                    : progress.phase === "error"
+                      ? "Операция завершилась с ошибкой"
+                      : progress.phase === "cancelled"
+                        ? "Операция отменена"
+                        : "Последняя операция завершена"}
                 </div>
                 <div className="mt-1 text-sm text-muted">
                   {progress.message || "BonchMind готовит библиотеку."}
                 </div>
               </div>
-              <div className="text-lg font-bold text-white">{progress.progress}%</div>
+              <div className="flex items-center gap-3">
+                {activeOperation === "upload" ? (
+                  <button
+                    type="button"
+                    onClick={() => operations.cancel()}
+                    className="flex items-center gap-1 rounded-md border border-white/10 px-2.5 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Отменить
+                  </button>
+                ) : null}
+                <div className="text-lg font-bold text-white">{progress.progress}%</div>
+              </div>
             </div>
             <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/8">
               <div

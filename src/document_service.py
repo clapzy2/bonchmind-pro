@@ -26,7 +26,7 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src import runtime, storage
+from src import knowledge_base, runtime, storage
 from src.db_models import Document
 
 
@@ -104,6 +104,7 @@ def create_document(
     owner_user_id: str,
     original_name: str,
     content: bytes,
+    cancel_check=None,
 ) -> Document:
     """Persist a Document, save the file, and index it.
 
@@ -171,7 +172,19 @@ def create_document(
             workspace_id=workspace_id,
             document_id=document_id,
             original_name=name,
+            cancel_check=cancel_check,
         )
+    except knowledge_base.IndexingCancelled:
+        # Cancelled mid-index (Stage 9a): fully roll back so nothing orphaned
+        # is left behind — chunks added so far, the file, and the row.
+        try:
+            kb.remove_chunks(workspace_id, document_id)
+        except Exception:
+            pass
+        _safe_unlink(stored_path)
+        db.delete(doc)
+        db.commit()
+        raise
     except Exception as error:
         doc.status = STATUS_ERROR
         doc.error_message = _safe_error_message(error)

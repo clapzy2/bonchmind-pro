@@ -145,7 +145,7 @@ def test_create_document_replaces_existing_with_same_original_name(db_session, f
 
 def test_create_document_marks_error_when_indexer_returns_error_string(db_session, monkeypatch):
     class ErrorKB(FakeKB):
-        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None, cancel_check=None):
             self._log("add_book", file_path=file_path, workspace_id=workspace_id, document_id=document_id)
             return "Файл пуст: book.pdf"
 
@@ -169,7 +169,7 @@ def test_create_document_error_message_is_truncated_to_1024_chars(db_session, mo
     long_message = "x" * 5000
 
     class ChattyKB(FakeKB):
-        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None, cancel_check=None):
             return long_message
 
     monkeypatch.setattr(runtime, "get_kb", lambda: ChattyKB())
@@ -188,7 +188,7 @@ def test_create_document_error_message_is_truncated_to_1024_chars(db_session, mo
 
 def test_create_document_marks_error_when_indexer_raises(db_session, monkeypatch):
     class CrashKB(FakeKB):
-        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None, cancel_check=None):
             raise RuntimeError("kaboom")
 
     monkeypatch.setattr(runtime, "get_kb", lambda: CrashKB())

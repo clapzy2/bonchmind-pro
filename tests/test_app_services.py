@@ -74,7 +74,7 @@ class FakeKB:
         self.indexed.discard((workspace_id, document_id))
         return f"🗑️ document_id={document_id}: удалено 1 фрагментов"
 
-    def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
+    def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None, cancel_check=None):
         self._log(
             "add_book",
             file_path=file_path,
@@ -391,7 +391,7 @@ def test_upload_marks_status_error_when_indexing_fails(
     monkeypatch.setattr(app_services.config, "DOCS_DIR", str(tmp_path / "docs"))
 
     class ErrorKB(FakeKB):
-        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
+        def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None, cancel_check=None):
             self._log("add_book", file_path=file_path, workspace_id=workspace_id, document_id=document_id)
             return "Формат не поддерживается: book.pdf"
 

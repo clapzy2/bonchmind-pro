@@ -335,7 +335,7 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
           <p className="text-sm text-muted">Скрепка — загрузить материал, не уходя с экрана.</p>
         </div>
 
-        <UploadInline progress={upload.progress} notice={upload.notice} />
+        <UploadInline progress={upload.progress} notice={upload.notice} onCancel={upload.cancel} />
 
         {exportError ? (
           <div className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">

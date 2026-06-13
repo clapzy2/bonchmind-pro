@@ -1712,6 +1712,15 @@ def generate_full_file_summary(
     if not chunks:
         return "НЕТ ИНФОРМАЦИИ - база пуста или файл не проиндексирован."
 
+    # Потолок для конспекта без темы: полный map-reduce по большому материалу
+    # = десятки последовательных вызовов LLM (зависание / обрыв соединения).
+    # Берём первые N фрагментов; если обрезали — честно помечаем результат ниже.
+    total_chunks = len(chunks)
+    max_chunks = getattr(config, "FULL_FILE_SUMMARY_MAX_CHUNKS", 60)
+    truncated = max_chunks > 0 and total_chunks > max_chunks
+    if truncated:
+        chunks = chunks[:max_chunks]
+
     group_size = params["group_size"]
     partial_summaries = []
 
@@ -1747,8 +1756,15 @@ def generate_full_file_summary(
         else selected_section
     )
     # Stage 7f: metadata header removed from user-facing output (see
-    # generate_selected_section_summary). Body only.
+    # generate_selected_section_summary). The only header we keep is an honest
+    # notice when a big material was capped to its first chunks above.
     header = ""
+    if truncated:
+        header = (
+            f"_⚠️ Материал большой — конспект построен по первым {max_chunks} "
+            f"фрагментам из {total_chunks}. Чтобы получить конспект по конкретному "
+            f"разделу, задайте тему._\n\n"
+        )
 
     return header + summary
 

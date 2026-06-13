@@ -22,6 +22,7 @@ ACTION_LOGIN = "login"
 ACTION_UPLOAD = "upload"
 ACTION_DELETE = "delete"
 ACTION_REINDEX = "reindex"
+ACTION_RECONCILE = "reconcile"
 
 
 def record(

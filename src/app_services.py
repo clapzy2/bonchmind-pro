@@ -32,6 +32,7 @@ from src import document_service, knowledge_base, runtime
 from src import summary_engine
 from src.api_models import (
     AdminStats,
+    ReconcileResponse,
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -1090,3 +1091,18 @@ def get_admin_stats() -> AdminStats:
         )
     finally:
         db.close()
+
+
+def reconcile_database_service() -> ReconcileResponse:
+    """Instance-wide reconcile of KB vectors against the ``Document`` table.
+
+    Superuser-only and deliberately *not* workspace-scoped — like
+    ``get_admin_stats`` it spans every workspace present in the index, scrubbing
+    orphan chunks left by a failed best-effort delete or a dev DB reset.
+    """
+    # Imported lazily to keep the module's top-level imports focused on the
+    # RAG/summary path; reconcile is a rare admin maintenance action.
+    from src import maintenance
+
+    summary = maintenance.reconcile_all_workspaces()
+    return ReconcileResponse(**summary)

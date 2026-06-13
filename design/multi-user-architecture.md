@@ -747,10 +747,13 @@ test on Stage 3 is signed off.
   (Python `TypeError` at any call site that forgets to pass it). The
   legacy Gradio consumer (`gr.State(DEFAULT_WORKSPACE_ID)`) is gone with
   the Gradio entrypoint itself (Stage 6d).
-* **Orphan chunk scrubber** — `document_service.delete_document` swallows
-  ChromaDB errors during `remove_chunks` so a transient failure does not
-  block the SQL delete. A maintenance task (Stage 6) should periodically
-  scan for chunks whose `document_id` no longer exists and drop them.
+* ~~**Orphan chunk scrubber**~~ **Done in Stage 9c.**
+  `document_service.delete_document` swallows ChromaDB errors during
+  `remove_chunks` so a transient failure does not block the SQL delete. The
+  reconciler (`src/maintenance.py` → superuser `POST /api/admin/reconcile`,
+  surfaced as the "Сверить базу" button on the admin screen) diffs each
+  workspace's Chroma `document_id`s against the live `Document.id` rows and
+  drops the chunks with no backing row. Workspace-scoped, idempotent.
 
 ---
 

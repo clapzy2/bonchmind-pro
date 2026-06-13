@@ -120,6 +120,8 @@ erDiagram
 
 **Admin (Stage 9b):** суперпользователю доступен раздел «Админ» (`frontend/src/components/admin-workspace.tsx`) поверх двух read-only эндпоинтов — `GET /api/admin/stats` (счётчики инстанса) и `GET /api/admin/audit` (последние N событий аудита, newest-first). Оба за `require_superuser`; обычный пользователь не видит вкладку и получает `403` на прямой запрос. Назначение первого superuser — напрямую в БД (`users.is_superuser`), публичного API для этого нет. Подробнее — раздел «Администрирование» в [`README.md`](README.md).
 
+**Reconcile (Stage 9c):** `POST /api/admin/reconcile` (тоже `require_superuser`, instance-wide) сверяет ChromaDB с таблицей `Document` и удаляет осиротевшие чанки. Логика в `src/maintenance.py` (`reconcile_workspace` / `reconcile_all_workspaces`) поверх `knowledge_base.remove_orphan_chunks`: для каждого workspace берётся множество живых `Document.id` из SQL, а чанки с `document_id` вне него удаляются — строго в рамках workspace, идемпотентно. На фронте это кнопка «Сверить базу» в разделе «Админ». Закрывает рассинхрон, который оставляет best-effort `remove_chunks` в `delete_document` или сброс dev-БД.
+
 ---
 
 ## Где что лежит

@@ -48,6 +48,7 @@ from src.api_models import (
     AdminStats,
     AuditEventOut,
     AuditLogResponse,
+    ReconcileResponse,
     ChatRequest,
     ChatResponse,
     MaterialActionResponse,
@@ -311,3 +312,24 @@ def admin_audit(limit: int = 50):
 def admin_stats():
     """Instance-wide counts (users / workspaces / documents / audit events)."""
     return services.get_admin_stats()
+
+
+@app.post("/api/admin/reconcile", response_model=ReconcileResponse, dependencies=_ADMIN)
+def admin_reconcile(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Scrub orphan KB chunks instance-wide (Stage 9c).
+
+    Reconciles ChromaDB against the ``Document`` table for every workspace,
+    removing chunks whose ``document_id`` has no backing row. Instance-wide by
+    design (like `/api/admin/stats`), so it never takes a workspace id from the
+    client. Idempotent."""
+    result = services.reconcile_database_service()
+    audit_service.record(
+        audit_service.ACTION_RECONCILE,
+        user_id=current_user.id,
+        target="*",
+        ip=_client_ip(request),
+    )
+    return result

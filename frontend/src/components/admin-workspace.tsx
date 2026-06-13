@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { DatabaseZap, RefreshCw, ShieldCheck } from "lucide-react";
 
 import {
   getAdminStats,
   getAuditEvents,
   getLatestDiagnostics,
+  reconcileDatabase,
   UnauthorizedError,
   type AdminStats,
   type AuditEvent,
@@ -67,6 +68,8 @@ export function AdminWorkspace() {
   const [diagnostics, setDiagnostics] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileNotice, setReconcileNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -106,6 +109,31 @@ export function AdminWorkspace() {
     })();
   }, [load]);
 
+  const reconcile = useCallback(async () => {
+    setReconciling(true);
+    setReconcileNotice(null);
+    try {
+      const { total_removed_chunks: chunks, total_removed_documents: docs } =
+        await reconcileDatabase();
+      setReconcileNotice(
+        chunks > 0
+          ? `Удалено осиротевших фрагментов: ${chunks} (документов: ${docs}). База синхронизирована.`
+          : "Орфанов не найдено — база уже синхронизирована.",
+      );
+      // Refresh stats so the counts reflect the cleanup.
+      await load();
+    } catch (err) {
+      if (handleAuthError(err, router)) {
+        return;
+      }
+      setReconcileNotice(
+        "Не удалось выполнить сверку базы. Проверьте backend и права доступа.",
+      );
+    } finally {
+      setReconciling(false);
+    }
+  }, [load, router]);
+
   const statCards = stats
     ? [
         { label: "Пользователи", value: stats.users },
@@ -122,20 +150,38 @@ export function AdminWorkspace() {
           <ShieldCheck className="accent" size={20} />
           <h1 className="text-xl font-bold text-white">Администрирование</h1>
         </div>
-        <button
-          type="button"
-          className="bm-button-secondary inline-flex items-center gap-2"
-          onClick={load}
-          disabled={loading}
-        >
-          <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
-          Обновить
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="bm-button-secondary inline-flex items-center gap-2"
+            onClick={reconcile}
+            disabled={reconciling || loading}
+            title="Удалить из векторной базы фрагменты, у которых больше нет материала в библиотеке"
+          >
+            <DatabaseZap size={15} className={reconciling ? "animate-pulse" : ""} />
+            {reconciling ? "Сверяю…" : "Сверить базу"}
+          </button>
+          <button
+            type="button"
+            className="bm-button-secondary inline-flex items-center gap-2"
+            onClick={load}
+            disabled={loading}
+          >
+            <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+            Обновить
+          </button>
+        </div>
       </div>
 
       {error ? (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
           {error}
+        </div>
+      ) : null}
+
+      {reconcileNotice ? (
+        <div className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+          {reconcileNotice}
         </div>
       ) : null}
 

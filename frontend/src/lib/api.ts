@@ -557,6 +557,33 @@ export async function getLatestDiagnostics(): Promise<string> {
   return data.text ?? "";
 }
 
+export type ReconcileWorkspaceResult = {
+  workspace_id: string;
+  removed_chunks: number;
+  removed_documents: number;
+};
+
+export type ReconcileResponse = {
+  workspaces: ReconcileWorkspaceResult[];
+  total_removed_chunks: number;
+  total_removed_documents: number;
+};
+
+/**
+ * Scrub orphan KB chunks instance-wide (Stage 9c). Reconciles ChromaDB against
+ * the Document table and removes chunks with no backing row. Idempotent.
+ */
+export async function reconcileDatabase(): Promise<ReconcileResponse> {
+  const response = await fetch(apiUrl("/api/admin/reconcile"), {
+    method: "POST",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+
+  ensureResponseOk(response, "Reconcile");
+  return (await response.json()) as ReconcileResponse;
+}
+
 // ---------------------------------------------------------------------------
 // Auth API
 // ---------------------------------------------------------------------------

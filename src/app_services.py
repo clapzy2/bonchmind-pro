@@ -1049,6 +1049,13 @@ def _new_turn(history, message, answer):
     ]
 
 
+def _normalize_dashes(text: str) -> str:
+    """Bot answers use a plain hyphen instead of em/en dashes (user preference)."""
+    if not text:
+        return text
+    return text.replace("—", "-").replace("–", "-")
+
+
 def chat_service(workspace_id: str, request: ChatRequest):
     # Quota gate (Stage 12): once the daily chat cap is hit, the whole chat is
     # paywalled with a 402 — raised before any work / trace is opened. Cheap
@@ -1066,6 +1073,7 @@ def chat_service(workspace_id: str, request: ChatRequest):
     )
 
     plan = _prepare_chat(workspace_id, request)
+    plan.answer = _normalize_dashes(plan.answer)
 
     if plan.kind == "empty":
         finish_trace(output="")
@@ -1094,6 +1102,7 @@ def chat_service(workspace_id: str, request: ChatRequest):
     answer = llm.call(plan.full_prompt)
     if is_refusal(answer):
         answer = _format_no_information_message(plan.selected_file)
+    answer = _normalize_dashes(answer)
 
     quota.record_usage(workspace_id, quota.ACTION_CHAT, meta={"answer_mode": request.answer_mode})
 
@@ -1143,6 +1152,7 @@ def chat_stream_service(workspace_id: str, request: ChatRequest, *, user_id: str
     Short paths (empty / greeting / no-context) emit a single ``done`` event.
     """
     plan = _prepare_chat(workspace_id, request)
+    plan.answer = _normalize_dashes(plan.answer)
 
     if plan.kind == "empty":
         yield _chat_done_event(
@@ -1166,6 +1176,7 @@ def chat_stream_service(workspace_id: str, request: ChatRequest, *, user_id: str
     try:
         for token in llm.stream(plan.full_prompt):
             if token:
+                token = _normalize_dashes(token)
                 parts.append(token)
                 yield _ndjson({"type": "token", "text": token})
     except Exception as error:  # generation failed mid-stream — no metering

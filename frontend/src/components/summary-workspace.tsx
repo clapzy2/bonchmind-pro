@@ -340,7 +340,6 @@ export function SummaryWorkspace({ materials, onResult, onLibraryChange }: Summa
             <Search className="h-4 w-4" />
             {showSources ? "Скрыть источники" : "Проверить источники"}
           </button>
-          <p className="text-sm text-muted">Скрепка — загрузить материал, не уходя с экрана.</p>
         </div>
 
         <UploadInline progress={upload.progress} notice={upload.notice} onCancel={upload.cancel} cancelling={upload.cancelling} />

@@ -435,6 +435,15 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
                 onChange={handleUploadChange}
               />
               <button
+                className="bm-button-primary h-12 px-6 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={isLoading || !message.trim()}
+                onClick={handleSend}
+              >
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {isLoading ? "Отвечаю..." : "Отправить"}
+              </button>
+              <button
                 className="bm-button-secondary flex h-12 w-12 items-center justify-center disabled:cursor-not-allowed disabled:opacity-60"
                 type="button"
                 disabled={upload.isRunning}
@@ -448,15 +457,6 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
                   <Paperclip className="h-4 w-4" />
                 )}
               </button>
-              <button
-                className="bm-button-primary h-12 px-6 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                type="button"
-                disabled={isLoading || !message.trim()}
-                onClick={handleSend}
-              >
-                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                {isLoading ? "Отвечаю..." : "Отправить"}
-              </button>
               {isLoading ? (
                 <button
                   className="bm-button-secondary h-12 px-4 text-sm font-semibold text-white"
@@ -467,9 +467,6 @@ export function AssistantWorkspace({ materials, onLibraryChange }: AssistantWork
                   Стоп
                 </button>
               ) : null}
-              <p className="text-sm text-muted">
-                Скрепка — чтобы загрузить новый материал прямо отсюда.
-              </p>
             </div>
 
             <UploadInline progress={upload.progress} notice={upload.notice} onCancel={upload.cancel} cancelling={upload.cancelling} />

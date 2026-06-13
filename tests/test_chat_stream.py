@@ -76,6 +76,19 @@ def test_stream_generate_streams_tokens_then_done(authed_client, monkeypatch):
     assert done["history"][-1] == {"role": "assistant", "content": "Это ответ."}
 
 
+def test_stream_normalizes_em_dash_to_hyphen(authed_client, monkeypatch):
+    """Bot answers print a plain hyphen — live tokens and the final answer alike."""
+    monkeypatch.setattr(app_services.runtime, "get_kb", lambda: _ChatKB())
+    monkeypatch.setattr(app_services.runtime, "get_llm", lambda: _StreamLLM(["Bluetooth ", "— это ", "стандарт.–конец"]))
+
+    resp = authed_client.post("/api/chat/stream", json={"message": "Объясни тему"})
+    events = _events(resp)
+
+    tokens = [e["text"] for e in events if e["type"] == "token"]
+    assert all("—" not in t and "–" not in t for t in tokens)
+    assert events[-1]["answer"] == "Bluetooth - это стандарт.-конец"
+
+
 def test_stream_no_context_emits_done_without_tokens(authed_client, monkeypatch):
     monkeypatch.setattr(app_services.runtime, "get_kb", lambda: _EmptyKB())
     # get_llm must never be called on the no-context path.

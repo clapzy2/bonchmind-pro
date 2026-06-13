@@ -122,6 +122,8 @@ erDiagram
 
 **Reconcile (Stage 9c):** `POST /api/admin/reconcile` (тоже `require_superuser`, instance-wide) сверяет ChromaDB с таблицей `Document` и удаляет осиротевшие чанки. Логика в `src/maintenance.py` (`reconcile_workspace` / `reconcile_all_workspaces`) поверх `knowledge_base.remove_orphan_chunks`: для каждого workspace берётся множество живых `Document.id` из SQL, а чанки с `document_id` вне него удаляются — строго в рамках workspace, идемпотентно. На фронте это кнопка «Сверить базу» в разделе «Админ». Закрывает рассинхрон, который оставляет best-effort `remove_chunks` в `delete_document` или сброс dev-БД.
 
+**Plans / quotas / metering (Stage 12):** фундамент монетизации. `User.plan` (`free`/`pro`) — субъект биллинга для личного workspace. Все лимиты идут через единый seam `src/billing.get_billing_context(workspace) → {plan, billing_subject_type, billing_subject_id, limits}` (сейчас субъект = владелец, потом = организация — одна ветка). `src/quota.py` проверяет квоты (`check_quota` → `QuotaExceeded` → `402`) и пишет ledger `usage_events` (`record_usage`): `chat`/`summary` — дневные лимиты, `upload` — общий лимит материалов (до чтения файла). `GET /api/billing/me` + usage-панель на фронте. Полная B2B-модель (кафедра → преподаватели → курсы → студенты) спроектирована в [`design/monetization-and-b2b.md`](design/monetization-and-b2b.md) и добавляется аддитивно.
+
 ---
 
 ## Где что лежит
@@ -141,6 +143,7 @@ erDiagram
 | Frontend shell + роутинг | `frontend/src/app/page.tsx`, `frontend/src/components/app-shell.tsx` |
 | Frontend API-клиент + auth-хелперы | `frontend/src/lib/api.ts`, `frontend/src/lib/auth-context.tsx` |
 | Экраны рабочих пространств | `frontend/src/components/{assistant,summary,materials,admin}-workspace.tsx` |
+| Тарифы / квоты / метеринг | `src/billing.py`, `src/quota.py`; `User.plan` + `UsageEvent`; `GET /api/billing/me`; `frontend/src/components/usage-panel.tsx`, `frontend/src/lib/paywall.ts` |
 
 ---
 

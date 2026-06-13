@@ -195,10 +195,19 @@ def get_current_user(
         )
 
     user = db.get(User, payload["sub"])
-    if user is None or not user.is_active:
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="user_not_found",
+        )
+    if not user.is_active:
+        # Banned / deactivated: reject the *live* token too, not just at login,
+        # so a ban takes effect immediately on already-issued cookies/JWTs.
+        # Kept at 401 (not 403) so the frontend bounces to /login rather than
+        # showing a dead-end; the detail stays coarse on purpose.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="user_inactive",
         )
     return user
 

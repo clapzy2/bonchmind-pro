@@ -71,12 +71,14 @@ Plus CI green (`.github/workflows/ci.yml`: backend tests + alembic upgrade check
 | Workspaces (UI screens) | `frontend/src/components/{assistant,summary,materials,admin}-workspace.tsx` |
 | Audit log (write + read) | `src/audit_service.py` (`record`, `list_recent`); superuser admin endpoints in `api_app.py` |
 | Orphan-chunk reconcile (KB↔Document) | `src/maintenance.py` (`reconcile_*`) + `knowledge_base.remove_orphan_chunks`; `POST /api/admin/reconcile` |
+| Plans / quotas / metering | `src/billing.py` (`get_billing_context`), `src/quota.py` (`check_quota`, `record_usage`); `User.plan` + `UsageEvent`; `GET /api/billing/me`, `402` on chat/summary/upload. Design: `design/monetization-and-b2b.md` |
 
 ## Test setup
 
 - `tests/conftest.py` sets `DATABASE_URL` to a temp SQLite and seeds users/workspaces; tests are isolated per-run.
 - `tests/test_knowledge_base_isolation.py` uses a `FakeEmbeddings` stub and disables the reranker — that's how to write KB tests without loading 2GB of models.
 - Tests must explicitly pass `workspace_id` to every KB / summary call. There is no default.
+- `conftest.py` sets `RATE_LIMIT_ENABLED=false` and `QUOTAS_ENABLED=false` so the suite isn't throttled or paywalled; the dedicated rate-limit / billing tests flip them on for their scope (`tests/test_billing.py` monkeypatches `config.QUOTAS_ENABLED`).
 
 ## Env
 
@@ -101,4 +103,4 @@ For Ollama: `LLM_MODE=ollama` + a running local Ollama on `:11434`. `JWT_SECRET_
 ## Out of scope for now
 
 - Light theme, finer roles than `is_superuser` (per-workspace roles, promote/demote, ban, rate-limit tuning from the UI), mobile/responsive polish, English UI (i18n), pgvector. These are the consciously-deferred gaps documented in `README.md` — don't fix them unless a stage explicitly takes them on.
-- Done since this file was first written: Docker/Postgres deploy (Stage 8), Settings/Quality tabs were removed rather than built (Stage 7d), security hardening + audit log (Stage 9a), the superuser **Admin** screen — stats + audit log + diagnostics (Stage 9b, `frontend/src/components/admin-workspace.tsx`), the orphan-chunk **reconciler** — `src/maintenance.py` + `POST /api/admin/reconcile`, surfaced as the "Сверить базу" admin button (Stage 9c), and **multi-file upload** — frontend-orchestrated sequential queue in `use-material-operations.uploadFiles` + drag-and-drop in `materials-workspace.tsx`, no backend change (Stage 11). `run-diagnostics.tsx` is now wired into the admin screen.
+- Done since this file was first written: Docker/Postgres deploy (Stage 8), Settings/Quality tabs were removed rather than built (Stage 7d), security hardening + audit log (Stage 9a), the superuser **Admin** screen — stats + audit log + diagnostics (Stage 9b, `frontend/src/components/admin-workspace.tsx`), the orphan-chunk **reconciler** — `src/maintenance.py` + `POST /api/admin/reconcile`, surfaced as the "Сверить базу" admin button (Stage 9c), **multi-file upload** — frontend-orchestrated sequential queue in `use-material-operations.uploadFiles` + drag-and-drop in `materials-workspace.tsx`, no backend change (Stage 11), and the **plans/quotas/metering** monetization foundation — `User.plan` (free/pro), `UsageEvent` ledger, `src/billing.py` + `src/quota.py`, usage panel + paywall, all designed forward for B2B in `design/monetization-and-b2b.md` (Stage 12). `run-diagnostics.tsx` is now wired into the admin screen.

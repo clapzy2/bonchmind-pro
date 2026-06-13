@@ -161,3 +161,23 @@ class ReconcileResponse(BaseModel):
     workspaces: list[ReconcileWorkspaceResult] = Field(default_factory=list)
     total_removed_chunks: int = 0
     total_removed_documents: int = 0
+
+
+class UsageCounter(BaseModel):
+    """Used vs. allowed for one metered action (Stage 12)."""
+
+    used: int = 0
+    limit: int = 0
+
+
+class BillingUsage(BaseModel):
+    materials: UsageCounter = Field(default_factory=UsageCounter)
+    chat: UsageCounter = Field(default_factory=UsageCounter)
+    summary: UsageCounter = Field(default_factory=UsageCounter)
+
+
+class BillingMeResponse(BaseModel):
+    """Current plan + usage for the caller's workspace (Stage 12)."""
+
+    plan: str = "free"
+    usage: BillingUsage = Field(default_factory=BillingUsage)

@@ -14,6 +14,7 @@ import {
   type MaterialProgressResponse,
 } from "@/lib/api";
 import { handleAuthError } from "@/lib/handle-auth-error";
+import { notifyUsageChanged, paywallText } from "@/lib/paywall";
 
 /**
  * Shared lifecycle for every long-running material operation: upload,
@@ -154,6 +155,8 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
 
     async function finalize() {
       await onSync();
+      // A single upload / delete changes the materials count → refresh usage.
+      notifyUsageChanged();
       if (cancelled) {
         return;
       }
@@ -360,6 +363,9 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
       let ok = 0;
       let failed = 0;
       let lastOkName = "";
+      // Set when a file hits the materials quota (402) — stops the queue and
+      // becomes the final "upgrade" notice instead of the generic summary.
+      let quotaNotice: string | null = null;
 
       // Resolve once the *current* file's background job settles. Guards against
       // the stale-progress race: don't accept a "done" snapshot until we've seen
@@ -457,11 +463,18 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
             // looked like "shows 2 but only 1 loaded" mid-queue).
             if (mountedRef.current) {
               await Promise.resolve(onSync()).catch(() => undefined);
+              notifyUsageChanged();
             }
           }
         } catch (err) {
           // Aborted mid-transfer (cancel) → stop the whole queue.
           if (err instanceof DOMException && err.name === "AbortError") {
+            break;
+          }
+          // Materials quota hit (402) → stop the queue; the rest would fail too.
+          const paywall = paywallText(err);
+          if (paywall) {
+            quotaNotice = paywall;
             break;
           }
           if (handleAuthError(err, router)) {
@@ -488,14 +501,21 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
       }
 
       const cancelled = batchCancelledRef.current;
-      const parts: string[] = [];
-      if (ok > 0) parts.push(`загружено ${ok}`);
-      if (failed > 0) parts.push(`с ошибкой ${failed}`);
-      const summary = parts.length ? parts.join(", ") : "ничего не загружено";
-      setNotice({
-        tone: cancelled ? "info" : failed > 0 ? "warning" : "success",
-        text: cancelled ? `Загрузка остановлена: ${summary}.` : `Готово: ${summary}.`,
-      });
+      if (quotaNotice) {
+        setNotice({
+          tone: "warning",
+          text: ok > 0 ? `${quotaNotice} Загружено: ${ok}.` : quotaNotice,
+        });
+      } else {
+        const parts: string[] = [];
+        if (ok > 0) parts.push(`загружено ${ok}`);
+        if (failed > 0) parts.push(`с ошибкой ${failed}`);
+        const summary = parts.length ? parts.join(", ") : "ничего не загружено";
+        setNotice({
+          tone: cancelled ? "info" : failed > 0 ? "warning" : "success",
+          text: cancelled ? `Загрузка остановлена: ${summary}.` : `Готово: ${summary}.`,
+        });
+      }
 
       // Auto-select the last successfully indexed material (never after cancel).
       if (!cancelled && ok > 0 && lastOkName && onComplete) {

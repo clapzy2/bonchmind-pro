@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -48,6 +49,10 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Personal billing plan (Stage 12): ``free`` / ``pro``. This is the billing
+    # subject for a personal workspace; an org-owned workspace will resolve its
+    # plan from the organization instead (see design/monetization-and-b2b.md).
+    plan: Mapped[str] = mapped_column(String(16), nullable=False, default="free")
     # Reserved for a future email-verification flow (not implemented in Stage 1).
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
@@ -171,3 +176,34 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, index=True
     )
+
+
+class UsageEvent(Base):
+    """Append-only metering ledger for billable actions (Stage 12).
+
+    Records one row per ``chat`` / ``summary`` / ``upload``. Powers both quota
+    enforcement (count a billing subject's actions in a window) and future cost
+    measurement (``meta`` can carry model / token / cost details).
+
+    Like :class:`AuditEvent` it has NO foreign keys: the ledger must survive
+    deletion of the user / workspace it refers to, for accounting. The billing
+    subject is the *user* today and an *organization* later (see
+    ``design/monetization-and-b2b.md``); recording ``billing_subject_*`` now
+    means quota counting never has to be rewritten for the org tier.
+    """
+
+    __tablename__ = "usage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    units: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    billing_subject_type: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
+    billing_subject_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, index=True
+    )
+    # Best-effort details (model, char/token counts, cost, error). JSON works on
+    # both SQLite (dev/CI) and Postgres (prod).
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)

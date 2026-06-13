@@ -482,6 +482,34 @@ docker compose exec api python -c "from src.db import SessionLocal; from src.db_
 
 ---
 
+## Тарифы и лимиты
+
+Stage 12 закладывает фундамент монетизации: персональный план у пользователя + квоты + метеринг. Полная B2B-архитектура (кафедра → преподаватели → курсы → студенты) спроектирована в [`design/monetization-and-b2b.md`](design/monetization-and-b2b.md) и будет добавляться аддитивно.
+
+**Планы** (поле `User.plan`):
+
+| План | Материалы | Вопросы/день | Конспекты/день |
+|------|-----------|--------------|----------------|
+| `free` | 3 | 15 | 3 |
+| `pro` | 50 | 200 | 50 |
+
+Числа стартовые и env-overridable (`PLAN_FREE_MAX_MATERIALS`, `PLAN_PRO_CHAT_PER_DAY`, … — см. `config.PLAN_LIMITS`), чтобы крутить без миграций.
+
+* **Квоты** считаются через `src/billing.get_billing_context()` по «субъекту биллинга» (сейчас — пользователь, потом — организация). Превышение → `402` с payload `{error:"quota_exceeded", action, limit, used, plan}`; фронт показывает «лимит исчерпан, обновите тариф». `chat` / `summary` — дневной лимит (сброс в полночь UTC); `upload` — общий лимит материалов (проверяется до чтения файла и индексации).
+* **Метеринг**: каждое успешное действие пишет строку `usage_events` (`action`, `units`, `billing_subject_*`, `meta`) — для квот и будущего расчёта себестоимости.
+* **Использование** видно в правой панели («Тариф и лимиты»); `GET /api/billing/me` отдаёт план + used/limit.
+* Отключить энфорсмент целиком: `QUOTAS_ENABLED=false` (так делает тест-сьют).
+
+### Сменить тариф пользователя
+
+Биллинг-платёжки пока нет (отдельный будущий стейдж). Поднять/понизить план — напрямую в БД (как с суперпользователем):
+
+```powershell
+python -c "from src.db import SessionLocal; from src.db_models import User; s=SessionLocal(); u=s.query(User).filter(User.email=='you@example.com').one(); u.plan='pro'; s.commit(); print('plan:', u.email, u.plan)"
+```
+
+---
+
 ## Известные ограничения
 
 Осознанно отложенные known-gaps, которые не блокируют основную работу:
@@ -504,9 +532,11 @@ docker compose exec api python -c "from src.db import SessionLocal; from src.db_
 * **Stage 9 — Security / Admin:** rate limits, audit-лог, anti-enumeration, upload-DoS guard (9a); superuser-экран «Админ» — статистика, журнал аудита, диагностика (9b); орфан-скраббер — сверка ChromaDB ↔ `Document`, кнопка «Сверить базу» (9c).
 * **Stage 10 — Documentation:** ARCHITECTURE.md, DEMO.md, финальный README.
 * **Stage 11 — Мультизагрузка:** загрузка нескольких файлов сразу (выбор + drag-and-drop), последовательная очередь на фронте через существующий endpoint, прогресс «Файл i из N», отмена очереди.
+* **Stage 12 — Тарифы/квоты/метеринг:** `User.plan` (free/pro), лимиты + квоты (chat/summary/upload → `402`), `usage_events` ledger, `get_billing_context` (форвард-совместимо с org), usage-панель + paywall. Фундамент монетизации.
 
 ### Дальше
 
+* **Монетизация — следующие шаги** (по [`design/monetization-and-b2b.md`](design/monetization-and-b2b.md)): биллинг-платёжка + вебхуки; `Organization`/`OrganizationMember` + `Workspace.organization_id`; курсы, мультичленство и выбор активного workspace (кафедра → преподаватели → курсы → студенты).
 * **Тоньше роли:** per-workspace роли, promote/demote, бан пользователей, настройка rate limits из UI.
 * **Responsive polish:** mobile-first вёрстка, гамбургер-меню, тач-оптимизация.
 * **i18n:** английский интерфейс (next-intl).

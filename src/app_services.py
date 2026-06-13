@@ -28,10 +28,11 @@ from threading import Lock, Thread
 from sqlalchemy import func, select
 
 import config
-from src import document_service, knowledge_base, runtime
+from src import document_service, knowledge_base, quota, runtime
 from src import summary_engine
 from src.api_models import (
     AdminStats,
+    BillingMeResponse,
     ReconcileResponse,
     ChatMessage,
     ChatRequest,
@@ -556,6 +557,14 @@ def upload_material_service(workspace_id: str, user_id: str, file_name, content)
         message=f"{normalized_name} готов к поиску и конспектам",
         current_file=normalized_name,
     )
+    # Meter the successful upload (Stage 12). The material-count quota itself is
+    # checked at the route before the file is even read; this is the ledger.
+    quota.record_usage(
+        workspace_id,
+        quota.ACTION_UPLOAD,
+        user_id=user_id,
+        meta={"size_bytes": len(content), "name": normalized_name},
+    )
     return MaterialActionResponse(
         ok=True,
         message=f"✅ {normalized_name}: материал загружен и проиндексирован.",
@@ -751,6 +760,10 @@ def generate_summary_service(workspace_id: str, request: SummaryRequest):
     pre-Stage-6d bridge that detoured through ``main.on_generate_summary``
     in the Gradio entrypoint.
     """
+    # Quota gate (Stage 12): summaries are the expensive LLM path, so the free
+    # tier caps them tightly. Raised as 402 before any work when over the cap.
+    quota.check_quota(workspace_id, quota.ACTION_SUMMARY)
+
     selected_file = _normalize_selected_file(request.selected_file)
     selected_section = request.selected_section
     topic = (request.topic or "").strip()
@@ -838,6 +851,10 @@ def generate_summary_service(workspace_id: str, request: SummaryRequest):
         text = f"Ошибка: {error}"
         finish_trace(output=text, error=error)
 
+    # Meter only a real summary run — not the error fallback above.
+    if not str(text).startswith("Ошибка:"):
+        quota.record_usage(workspace_id, quota.ACTION_SUMMARY, meta={"summary_type": summary_type})
+
     return SummaryResponse(
         text=text,
         diagnostics=format_last_trace(),
@@ -891,6 +908,12 @@ def _group_chat_sources(sources, selected_file, limit=4):
 
 
 def chat_service(workspace_id: str, request: ChatRequest):
+    # Quota gate (Stage 12): once the daily chat cap is hit, the whole chat is
+    # paywalled with a 402 — raised before any work / trace is opened. Cheap
+    # paths (greeting / empty / no-context) never record usage, so they don't
+    # consume the cap.
+    quota.check_quota(workspace_id, quota.ACTION_CHAT)
+
     message = str(request.message or "").strip()
     selected_file = _normalize_selected_file(request.selected_file)
     history = [ChatMessage(role=item.role, content=item.content) for item in (request.history or [])]
@@ -1018,6 +1041,10 @@ def chat_service(workspace_id: str, request: ChatRequest):
     if is_refusal(answer):
         answer = _format_no_information_message(selected_file)
 
+    # Meter the action only once a real LLM answer was produced (the no-context
+    # branch above returns earlier without calling the model).
+    quota.record_usage(workspace_id, quota.ACTION_CHAT, meta={"answer_mode": request.answer_mode})
+
     updated_history = history + [
         ChatMessage(role="user", content=message),
         ChatMessage(role="assistant", content=answer),
@@ -1064,6 +1091,11 @@ def get_latest_diagnostics_text():
 
 def get_latest_diagnostics_json():
     return get_last_trace()
+
+
+def get_billing_me(workspace_id: str) -> BillingMeResponse:
+    """Current plan + per-action usage for the caller's workspace (Stage 12)."""
+    return BillingMeResponse(**quota.usage_summary(workspace_id))
 
 
 def get_admin_stats() -> AdminStats:

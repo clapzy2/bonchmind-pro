@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookCopy,
   LibraryBig,
@@ -39,6 +39,7 @@ function getMaterialBadge(label: string) {
 export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWorkspaceProps) {
   const [query, setQuery] = useState("");
   const [selectedMaterial, setSelectedMaterial] = useState(materials[0]?.name ?? "");
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const operations = useMaterialOperations({
@@ -46,7 +47,10 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
       await onLibraryChange?.();
     },
   });
-  const { progress, notice, isRunning, activeOperation } = operations;
+  const { progress, notice, isRunning, activeOperation, batch } = operations;
+  // An upload is in flight whether it's a single file (activeOperation) or a
+  // multi-file queue (batch). Both should show the spinner + cancel control.
+  const uploading = activeOperation === "upload" || batch !== null;
 
   const filteredMaterials = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -112,14 +116,37 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
     }
   }
 
-  function handleUploadChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    // Reset the input first so re-selecting the same file still fires change.
-    event.target.value = "";
-    if (!file || isRunning) {
+  function startUpload(files: File[]) {
+    if (files.length === 0 || isRunning) {
       return;
     }
-    void operations.uploadFile(file, (materialName) => setSelectedMaterial(materialName));
+    void operations.uploadFiles(files, (materialName) => setSelectedMaterial(materialName));
+  }
+
+  function handleUploadChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    // Reset the input first so re-selecting the same file(s) still fires change.
+    event.target.value = "";
+    startUpload(files);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (!isRunning) {
+      setIsDragging(true);
+    }
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragging(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragging(false);
+    const files = event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : [];
+    startUpload(files);
   }
 
   function handleReindexSelected(materialName: string) {
@@ -154,10 +181,18 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
           </p>
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-3">
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`mt-6 flex flex-col items-start gap-3 rounded-xl border border-dashed p-4 transition sm:flex-row sm:items-center ${
+            isDragging ? "border-brand bg-[rgba(240,90,26,0.07)]" : "border-white/12 bg-[#0f1319]"
+          }`}
+        >
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             className="hidden"
             accept=".pdf,.txt,.epub,.docx,.md,.fb2,.zip,.html,.htm"
             onChange={handleUploadChange}
@@ -166,11 +201,16 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isRunning}
-            className="bm-button-primary h-11 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+            className="bm-button-primary h-11 shrink-0 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {activeOperation === "upload" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            Добавить материал
+            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            Добавить материалы
           </button>
+          <p className="text-sm leading-6 text-muted">
+            {isDragging
+              ? "Отпустите файлы, чтобы загрузить их в библиотеку."
+              : "Можно выбрать сразу несколько файлов или перетащить их сюда."}
+          </p>
         </div>
 
         {(progress.active || progress.phase === "done" || progress.phase === "error" || progress.phase === "cancelled") ? (
@@ -191,7 +231,7 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {activeOperation === "upload" ? (
+                {uploading ? (
                   <button
                     type="button"
                     onClick={() => operations.cancel()}
@@ -214,6 +254,7 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
               />
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.16em] text-white/45">
+              {batch && batch.total > 1 ? <span>Файл {batch.index + 1} из {batch.total}</span> : null}
               <span>Этап: {progress.phase || "starting"}</span>
               {progress.current_file ? <span>Файл: {progress.current_file}</span> : null}
               <span>{progress.active ? "live" : progress.phase === "error" ? "error" : "done"}</span>

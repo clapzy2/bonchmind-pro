@@ -90,12 +90,23 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
   // Immediate "cancel requested" flag for responsive UI — the real stop still
   // happens at the next batch checkpoint on the backend.
   const [cancelling, setCancelling] = useState(false);
+  // Multi-file upload (Stage 11): the frontend drives N single-file uploads
+  // sequentially through the existing endpoint. ``batch`` is non-null only
+  // while a multi-upload queue is in flight; it carries the position so the UI
+  // can show "Файл 2 из 5".
+  const [batch, setBatch] = useState<{ index: number; total: number } | null>(null);
   const pendingRef = useRef<{ onComplete?: (name: string) => void; materialName: string } | null>(null);
   // Aborts the in-flight upload POST so "Отменить" can stop a large file mid
   // transfer (before the backend even queues the indexing job).
   const abortRef = useRef<AbortController | null>(null);
+  // Set by ``cancel`` so the sequential ``uploadFiles`` loop stops after the
+  // current file instead of marching through the rest of the queue.
+  const batchCancelledRef = useRef(false);
+  // Guards against setState after the screen unmounts mid-batch (e.g. a tab
+  // switch): the imperative loop checks this before touching state.
+  const mountedRef = useRef(true);
 
-  const isRunning = activeOperation !== null;
+  const isRunning = activeOperation !== null || batch !== null;
 
   // Poll progress while an operation is in flight. Interval is cleared on
   // unmount and whenever activeOperation changes, so it never leaks.
@@ -207,8 +218,19 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
     };
   }, []);
 
+  // Track mount state so the imperative ``uploadFiles`` loop never setState on
+  // an unmounted screen (a tab switch unmounts this hook).
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const cancel = useCallback(async () => {
     setCancelling(true);
+    // Stop the sequential multi-upload queue after the current file.
+    batchCancelledRef.current = true;
     setNotice({ tone: "info", text: "Отменяю операцию…" });
     // Abort the in-flight upload POST (stops a large file mid-transfer); the
     // run() catch turns the AbortError into a cancelled state.
@@ -321,6 +343,162 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
     [run],
   );
 
+  // Multi-file upload (Stage 11). Drives the files through the existing
+  // single-file endpoint one at a time — no backend change, every file keeps
+  // its own size limit / replace-on-conflict / audit. A failed file doesn't
+  // abort the queue; cancel stops after the current file.
+  const uploadFiles = useCallback(
+    async (files: File[], onComplete?: (materialName: string) => void) => {
+      if (isRunning || files.length === 0) {
+        return;
+      }
+      batchCancelledRef.current = false;
+      setCancelling(false);
+      setNotice(null);
+
+      const total = files.length;
+      let ok = 0;
+      let failed = 0;
+      let lastOkName = "";
+
+      // Resolve once the *current* file's background job settles. Guards against
+      // the stale-progress race: don't accept a "done" snapshot until we've seen
+      // this file's job go active, unless the snapshot's current_file matches
+      // (a fast finish we'd otherwise miss between polls).
+      const pollUntilSettled = (label: string, expectedNames: string[]) =>
+        new Promise<MaterialProgressResponse>((resolve) => {
+          let seenActive = false;
+          let timer = 0;
+          const schedule = () => {
+            timer = window.setTimeout(tick, 500);
+          };
+          function tick() {
+            if (!mountedRef.current) {
+              resolve(idleMaterialProgress);
+              return;
+            }
+            getMaterialProgress()
+              .then((snap) => {
+                // Pristine idle: the job isn't queued yet (file still
+                // transferring). Keep waiting.
+                if (!snap.active && snap.phase === "") {
+                  schedule();
+                  return;
+                }
+                setProgress({
+                  ...snap,
+                  message: snap.message ? `${label}: ${snap.message}` : label,
+                });
+                if (snap.active) {
+                  seenActive = true;
+                  schedule();
+                  return;
+                }
+                if (snap.phase === "cancelled") {
+                  resolve(snap);
+                  return;
+                }
+                const settledForThisFile =
+                  (snap.phase === "done" || snap.phase === "error") &&
+                  expectedNames.includes(snap.current_file);
+                if (seenActive || settledForThisFile) {
+                  resolve(snap);
+                  return;
+                }
+                // Stale "done" from the previous file, or the job hasn't started
+                // yet — keep waiting for this file's own run.
+                schedule();
+              })
+              .catch(() => schedule());
+          }
+          window.clearTimeout(timer);
+          timer = window.setTimeout(tick, 300);
+        });
+
+      setBatch({ index: 0, total });
+
+      for (let i = 0; i < total; i++) {
+        if (batchCancelledRef.current || !mountedRef.current) {
+          break;
+        }
+        const file = files[i];
+        const label = total > 1 ? `Файл ${i + 1} из ${total}` : `Загрузка ${file.name}`;
+        setBatch({ index: i, total });
+        setProgress({
+          active: true,
+          operation: "upload",
+          phase: "queued",
+          message: `${label}: ${file.name}`,
+          progress: 0,
+          current_file: file.name,
+          error: "",
+        });
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        try {
+          const response = await uploadMaterial(file, controller.signal);
+          if (!response.ok) {
+            failed++;
+            continue;
+          }
+          const settled = await pollUntilSettled(label, [file.name, response.material_name].filter(Boolean));
+          if (settled.phase === "cancelled") {
+            break;
+          }
+          if (settled.phase === "error") {
+            failed++;
+          } else {
+            ok++;
+            lastOkName = response.material_name || file.name;
+          }
+        } catch (err) {
+          // Aborted mid-transfer (cancel) → stop the whole queue.
+          if (err instanceof DOMException && err.name === "AbortError") {
+            break;
+          }
+          if (handleAuthError(err, router)) {
+            abortRef.current = null;
+            setBatch(null);
+            setProgress(idleMaterialProgress);
+            return;
+          }
+          failed++;
+        }
+      }
+
+      abortRef.current = null;
+      if (!mountedRef.current) {
+        return;
+      }
+      setBatch(null);
+      setProgress(idleMaterialProgress);
+      setCancelling(false);
+
+      await onSync();
+      if (!mountedRef.current) {
+        return;
+      }
+
+      const cancelled = batchCancelledRef.current;
+      const parts: string[] = [];
+      if (ok > 0) parts.push(`загружено ${ok}`);
+      if (failed > 0) parts.push(`с ошибкой ${failed}`);
+      const summary = parts.length ? parts.join(", ") : "ничего не загружено";
+      setNotice({
+        tone: cancelled ? "info" : failed > 0 ? "warning" : "success",
+        text: cancelled ? `Загрузка остановлена: ${summary}.` : `Готово: ${summary}.`,
+      });
+
+      // Auto-select the last successfully indexed material (never after cancel).
+      if (!cancelled && ok > 0 && lastOkName && onComplete) {
+        onComplete(lastOkName);
+      }
+    },
+    [isRunning, onSync, router],
+  );
+
   const deleteFile = useCallback(
     (materialName: string) =>
       run({
@@ -372,7 +550,9 @@ export function useMaterialOperations({ onSync }: UseMaterialOperationsArgs) {
     isRunning,
     activeOperation,
     cancelling,
+    batch,
     uploadFile,
+    uploadFiles,
     deleteFile,
     reindexFile,
     reindexAll,

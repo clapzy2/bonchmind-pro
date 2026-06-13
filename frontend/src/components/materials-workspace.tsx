@@ -172,7 +172,7 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <section className="bm-surface shrink-0 rounded-xl p-6 shadow-soft">
         <div className="max-w-4xl">
           <h1 className="text-2xl font-bold tracking-tight text-white">Библиотека</h1>
@@ -287,7 +287,7 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
         </div>
       </section>
 
-      <section className="bm-surface flex min-h-0 flex-1 flex-col rounded-xl p-6 shadow-soft">
+      <section className="bm-surface flex flex-col rounded-xl p-6 shadow-soft">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-white">Список материалов</h2>
@@ -324,7 +324,7 @@ export function MaterialsWorkspace({ materials, onLibraryChange }: MaterialsWork
           </div>
         ) : null}
 
-        <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1 assistant-scroll">
+        <div className="mt-5">
           <div className="space-y-3">
             {filteredMaterials.length > 0 ? (
               filteredMaterials.map((material) => {

@@ -105,6 +105,7 @@ def create_document(
     original_name: str,
     content: bytes,
     cancel_check=None,
+    progress_callback=None,
 ) -> Document:
     """Persist a Document, save the file, and index it.
 
@@ -173,6 +174,7 @@ def create_document(
             document_id=document_id,
             original_name=name,
             cancel_check=cancel_check,
+            progress_callback=progress_callback,
         )
     except knowledge_base.IndexingCancelled:
         # Cancelled mid-index (Stage 9a): fully roll back so nothing orphaned

@@ -61,7 +61,17 @@ function shortId(value: string | null): string {
   return value.length > 8 ? `${value.slice(0, 8)}…` : value;
 }
 
-export function AdminWorkspace() {
+type AdminWorkspaceProps = {
+  /**
+   * Refresh the shared shell state (materials + system status) after a
+   * reconcile. Without this the SourcePanel's "Материалов в базе" on other
+   * tabs keeps the pre-reconcile count until an F5, even though the scrub
+   * already dropped the orphan chunks.
+   */
+  onReconciled?: () => Promise<void> | void;
+};
+
+export function AdminWorkspace({ onReconciled }: AdminWorkspaceProps) {
   const router = useRouter();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -120,8 +130,10 @@ export function AdminWorkspace() {
           ? `Удалено осиротевших фрагментов: ${chunks} (документов: ${docs}). База синхронизирована.`
           : "Орфанов не найдено — база уже синхронизирована.",
       );
-      // Refresh stats so the counts reflect the cleanup.
-      await load();
+      // Refresh the admin stats and the shared shell state (the latter so the
+      // SourcePanel's "Материалов в базе" on other tabs drops to match,
+      // instead of showing the stale pre-reconcile count until an F5).
+      await Promise.all([load(), Promise.resolve(onReconciled?.())]);
     } catch (err) {
       if (handleAuthError(err, router)) {
         return;
@@ -132,7 +144,7 @@ export function AdminWorkspace() {
     } finally {
       setReconciling(false);
     }
-  }, [load, router]);
+  }, [load, onReconciled, router]);
 
   const statCards = stats
     ? [

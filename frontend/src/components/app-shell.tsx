@@ -121,7 +121,7 @@ export function AppShell({ health, materials, status }: AppShellProps) {
           ) : resolvedSection === "assistant" ? (
             <AssistantWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
           ) : resolvedSection === "admin" ? (
-            <AdminWorkspace />
+            <AdminWorkspace onReconciled={refreshLibraryState} />
           ) : (
             <MaterialsWorkspace materials={materialsState} onLibraryChange={refreshLibraryState} />
           )}

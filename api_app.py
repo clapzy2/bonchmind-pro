@@ -39,6 +39,7 @@ import config
 from src import app_services as services
 from src import audit_service
 from src import auth_service
+from src import quota
 from src.auth_api import router as auth_router
 from src.auth_service import get_current_user, require_superuser
 from src.rate_limit import limiter
@@ -48,6 +49,7 @@ from src.api_models import (
     AdminStats,
     AuditEventOut,
     AuditLogResponse,
+    BillingMeResponse,
     ReconcileResponse,
     ChatRequest,
     ChatResponse,
@@ -68,6 +70,25 @@ app = FastAPI(title="BonchMind Pro API", version="0.1.0")
 # limits are applied with @limiter.limit on auth/chat/upload.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# Quota enforcement (Stage 12): a plan limit hit surfaces as 402 Payment
+# Required with a structured payload the frontend turns into an "upgrade" CTA.
+async def _quota_exceeded_handler(request: Request, exc: quota.QuotaExceeded):
+    del request
+    return JSONResponse(
+        status_code=402,
+        content={
+            "error": "quota_exceeded",
+            "action": exc.action,
+            "limit": exc.limit,
+            "used": exc.used,
+            "plan": exc.plan,
+        },
+    )
+
+
+app.add_exception_handler(quota.QuotaExceeded, _quota_exceeded_handler)
 
 # Stage 9a: warn loudly if a prod-like deployment (Postgres) serves the auth
 # cookie without the Secure flag. Stays quiet for local dev/CI on SQLite.
@@ -146,6 +167,12 @@ def system_status(workspace_id: WorkspaceId):
     return services.get_system_status(workspace_id)
 
 
+@app.get("/api/billing/me", response_model=BillingMeResponse)
+def billing_me(workspace_id: WorkspaceId):
+    """The caller's plan + per-action usage/limits (Stage 12) for the usage UI."""
+    return services.get_billing_me(workspace_id)
+
+
 @app.get("/api/materials", response_model=MaterialsResponse)
 def materials(workspace_id: WorkspaceId):
     return services.list_materials(workspace_id)
@@ -164,6 +191,9 @@ async def material_upload(
     transitively derived from ``current_user`` via ``get_current_workspace_id``,
     but we keep ``current_user`` as a separate dependency so the owner id is
     explicit at the call site."""
+    # Quota gate (Stage 12): reject before reading the (possibly 50 MB) body or
+    # queuing the expensive indexing job when the material cap is already hit.
+    quota.check_quota(workspace_id, quota.ACTION_UPLOAD)
     content = await _read_upload_within_limit(request, file)
     result = services.start_upload_material_service(
         workspace_id, current_user.id, file.filename, content

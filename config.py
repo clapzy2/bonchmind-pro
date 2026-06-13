@@ -117,6 +117,44 @@ RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "30/minute")
 RATE_LIMIT_UPLOAD = os.getenv("RATE_LIMIT_UPLOAD", "20/minute")
 
 
+# --- Plans & quotas (Stage 12) --------------------------------------------
+# Per-plan usage limits, enforced via ``src.quota``. All numbers are
+# env-overridable so they can be tuned without a migration. Disable enforcement
+# entirely with QUOTAS_ENABLED=false (the test suite does this; quota-specific
+# tests flip it back on for their scope).
+#
+# ``max_materials`` is a *total* cap (current Document count); ``chat_per_day``
+# / ``summary_per_day`` are rolling per-UTC-day caps. ``model`` is a forward
+# hook for a cheaper free-tier model — both plans point at the configured model
+# for now.
+QUOTAS_ENABLED = os.getenv("QUOTAS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+_DEFAULT_MODEL = API_MODEL if LLM_MODE == "api" else OLLAMA_MODEL
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+PLAN_LIMITS = {
+    "free": {
+        "max_materials": _int_env("PLAN_FREE_MAX_MATERIALS", 3),
+        "chat_per_day": _int_env("PLAN_FREE_CHAT_PER_DAY", 15),
+        "summary_per_day": _int_env("PLAN_FREE_SUMMARY_PER_DAY", 3),
+        "model": os.getenv("PLAN_FREE_MODEL", _DEFAULT_MODEL),
+    },
+    "pro": {
+        "max_materials": _int_env("PLAN_PRO_MAX_MATERIALS", 50),
+        "chat_per_day": _int_env("PLAN_PRO_CHAT_PER_DAY", 200),
+        "summary_per_day": _int_env("PLAN_PRO_SUMMARY_PER_DAY", 50),
+        "model": os.getenv("PLAN_PRO_MODEL", _DEFAULT_MODEL),
+    },
+}
+
+
 def validate_config():
     """Проверяет базовые настройки проекта."""
     errors = []

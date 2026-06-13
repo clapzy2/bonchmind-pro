@@ -26,6 +26,9 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-only-for-pytest")
 # Rate limiting off by default in tests so the suite isn't throttled; the
 # dedicated rate-limit test toggles ``limiter.enabled`` on for its scope.
 os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+# Quotas off by default too (Stage 12) so existing tests aren't blocked by plan
+# limits; the billing/quota tests flip ``config.QUOTAS_ENABLED`` on for their scope.
+os.environ.setdefault("QUOTAS_ENABLED", "false")
 
 
 @pytest.fixture()

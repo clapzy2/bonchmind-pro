@@ -66,6 +66,12 @@ PLANNED_SUMMARY_CHUNKS_PER_QUERY = 5
 PLANNED_SUMMARY_MAX_CHUNKS = 40
 PLANNED_SUMMARY_MAX_CHUNKS_PER_SECTION = 4
 
+# Полнофайловый конспект (без темы): потолок фрагментов для map-reduce. На
+# большом материале полный обход = десятки последовательных вызовов LLM
+# (зависание / обрыв соединения). Сверх потолка берём первые N фрагментов и
+# честно помечаем конспект как «по началу материала». 0 = без потолка.
+FULL_FILE_SUMMARY_MAX_CHUNKS = 60
+
 # HyDE
 USE_HYDE      = False
 HYDE_VARIANTS = 3

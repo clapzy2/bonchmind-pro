@@ -112,11 +112,13 @@ erDiagram
 - **Тиры доступа** (в `api_app.py`):
   - Public: `/api/health`, `/api/auth/register`, `/api/auth/login`.
   - Authenticated: всё, что берёт зависимость `WorkspaceId`.
-  - Superuser-only: `/api/diagnostics/*`.
+  - Superuser-only: `/api/diagnostics/*` и `/api/admin/*` (через `require_superuser`).
 
 Итог: даже при ошибке в клиенте пользователь не может увидеть чужой workspace — backend подставляет его собственный из cookie.
 
 **Hardening (Stage 9a):** rate limiting по IP на auth/chat/upload (`429`), защита от upload-DoS (ранний `413` без чтения файла в память), равное время ответа login для несуществующего email (anti-enumeration), и append-only audit-лог (`audit_events`) для `login`/`upload`/`delete`/`reindex`. Подробнее — раздел «Безопасность» в [`README.md`](README.md).
+
+**Admin (Stage 9b):** суперпользователю доступен раздел «Админ» (`frontend/src/components/admin-workspace.tsx`) поверх двух read-only эндпоинтов — `GET /api/admin/stats` (счётчики инстанса) и `GET /api/admin/audit` (последние N событий аудита, newest-first). Оба за `require_superuser`; обычный пользователь не видит вкладку и получает `403` на прямой запрос. Назначение первого superuser — напрямую в БД (`users.is_superuser`), публичного API для этого нет. Подробнее — раздел «Администрирование» в [`README.md`](README.md).
 
 ---
 
@@ -136,7 +138,7 @@ erDiagram
 | Конфиг (env-driven) | `config.py` |
 | Frontend shell + роутинг | `frontend/src/app/page.tsx`, `frontend/src/components/app-shell.tsx` |
 | Frontend API-клиент + auth-хелперы | `frontend/src/lib/api.ts`, `frontend/src/lib/auth-context.tsx` |
-| Экраны рабочих пространств | `frontend/src/components/{assistant,summary,materials}-workspace.tsx` |
+| Экраны рабочих пространств | `frontend/src/components/{assistant,summary,materials,admin}-workspace.tsx` |
 
 ---
 

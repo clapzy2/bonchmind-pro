@@ -49,7 +49,7 @@ Plus CI green (`.github/workflows/ci.yml`: backend tests + alembic upgrade check
 - **Auth tiers** (set in `api_app.py`):
   - Public: `/api/health`, `/api/auth/register`, `/api/auth/login`.
   - Authenticated: everything that takes the `WorkspaceId` dependency.
-  - Superuser-only: `/api/diagnostics/*` (via `require_superuser`).
+  - Superuser-only: `/api/diagnostics/*` and `/api/admin/*` (via `require_superuser`). First superuser is promoted directly in the DB (`users.is_superuser`); there is no public promote API, by design.
 - **`Document` table is the source of truth for ownership.** Uploaded files write a row with `workspace_id` + `owner_user_id`; KB chunks carry the same `workspace_id` in metadata. Both must stay in sync.
 
 ## Where things live
@@ -68,7 +68,8 @@ Plus CI green (`.github/workflows/ci.yml`: backend tests + alembic upgrade check
 | Runtime config (env-driven) | `config.py` |
 | Frontend shell + routing | `frontend/src/app/page.tsx`, `frontend/src/components/app-shell.tsx` |
 | Frontend API client + auth helpers | `frontend/src/lib/api.ts`, `frontend/src/lib/handle-auth-error.ts` |
-| Workspaces (UI screens) | `frontend/src/components/{assistant,summary,materials,quality}-workspace.tsx` |
+| Workspaces (UI screens) | `frontend/src/components/{assistant,summary,materials,admin}-workspace.tsx` |
+| Audit log (write + read) | `src/audit_service.py` (`record`, `list_recent`); superuser admin endpoints in `api_app.py` |
 
 ## Test setup
 
@@ -98,5 +99,5 @@ For Ollama: `LLM_MODE=ollama` + a running local Ollama on `:11434`. `JWT_SECRET_
 
 ## Out of scope for now
 
-- Multi-file upload, light theme, admin diagnostics UI + roles (Stage 9), mobile/responsive polish, English UI (i18n), pgvector. These are the consciously-deferred gaps documented in `README.md` — don't fix them unless a stage explicitly takes them on.
-- Done since this file was first written: Docker/Postgres deploy (Stage 8), Settings/Quality tabs were removed rather than built (Stage 7d). The quality-narrative logic lives unused in `frontend/src/components/run-diagnostics.tsx`, ready to re-wire admin-gated in Stage 9.
+- Multi-file upload, light theme, finer roles than `is_superuser` (per-workspace roles, promote/demote, ban, rate-limit tuning from the UI), mobile/responsive polish, English UI (i18n), pgvector. These are the consciously-deferred gaps documented in `README.md` — don't fix them unless a stage explicitly takes them on.
+- Done since this file was first written: Docker/Postgres deploy (Stage 8), Settings/Quality tabs were removed rather than built (Stage 7d), security hardening + audit log (Stage 9a), and the superuser **Admin** screen — stats + audit log + diagnostics (Stage 9b, `frontend/src/components/admin-workspace.tsx`). `run-diagnostics.tsx` is now wired into the admin screen.

@@ -178,6 +178,12 @@ def material_progress(workspace_id: WorkspaceId):
     return services.get_material_progress(workspace_id)
 
 
+@app.post("/api/materials/cancel", response_model=MaterialActionResponse)
+def material_cancel(workspace_id: WorkspaceId):
+    """Request cancellation of the workspace's in-flight material job."""
+    return services.cancel_material_service(workspace_id)
+
+
 @app.get(
     "/api/materials/{file_name}/sections",
     response_model=SectionsResponse,

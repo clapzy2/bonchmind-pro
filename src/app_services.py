@@ -26,7 +26,7 @@ import os
 from threading import Lock, Thread
 
 import config
-from src import document_service, runtime
+from src import document_service, knowledge_base, runtime
 from src import summary_engine
 from src.api_models import (
     ChatMessage,
@@ -80,6 +80,25 @@ _IDLE_PROGRESS_STATE = {
     "error": "",
 }
 _material_progress_states: dict[str, dict] = {}
+# Cooperative-cancel flags, kept SEPARATE from the progress dict so they never
+# leak into MaterialProgressResponse(**snapshot). Set by cancel_material_service,
+# read by the indexing job's cancel_check, cleared when a job starts/finishes.
+_material_cancel_flags: dict[str, bool] = {}
+
+
+def _request_cancel(workspace_id: str) -> None:
+    with _progress_lock:
+        _material_cancel_flags[workspace_id] = True
+
+
+def _is_cancel_requested(workspace_id: str) -> bool:
+    with _progress_lock:
+        return _material_cancel_flags.get(workspace_id, False)
+
+
+def _clear_cancel(workspace_id: str) -> None:
+    with _progress_lock:
+        _material_cancel_flags.pop(workspace_id, None)
 
 
 def _normalize_selected_file(selected_file):
@@ -381,6 +400,19 @@ def _fail_material_progress(workspace_id, message="", current_file=""):
     )
 
 
+def _cancel_material_progress(workspace_id, message="", current_file=""):
+    _set_material_progress(
+        workspace_id,
+        active=False,
+        operation="idle",
+        phase="cancelled",
+        message=message,
+        progress=100,
+        current_file=current_file,
+        error="",
+    )
+
+
 def get_material_progress(workspace_id: str) -> MaterialProgressResponse:
     return MaterialProgressResponse(**_get_workspace_progress_snapshot(workspace_id))
 
@@ -401,6 +433,10 @@ def _launch_material_job(workspace_id, operation, message, target, material_name
                 message="Сейчас уже выполняется другая операция с библиотекой. Дождитесь завершения.",
                 material_name=material_name,
             )
+
+        # Clear any stale cancel flag so a new job doesn't inherit a cancel
+        # request left over from a previous operation.
+        _clear_cancel(workspace_id)
 
         _queue_material_progress(
             workspace_id,
@@ -474,6 +510,21 @@ def upload_material_service(workspace_id: str, user_id: str, file_name, content)
                 owner_user_id=user_id,
                 original_name=normalized_name,
                 content=content,
+                cancel_check=lambda: _is_cancel_requested(workspace_id),
+            )
+        except knowledge_base.IndexingCancelled:
+            # Cooperative cancel (Stage 9a): create_document already rolled back
+            # the partial document. Surface it as a cancelled (not failed) op.
+            _clear_cancel(workspace_id)
+            _cancel_material_progress(
+                workspace_id,
+                message=f"Загрузка {normalized_name} отменена.",
+                current_file=normalized_name,
+            )
+            return MaterialActionResponse(
+                ok=False,
+                message=f"Загрузка {normalized_name} отменена.",
+                material_name=normalized_name,
             )
         except Exception as error:
             _fail_material_progress(workspace_id, str(error), current_file=normalized_name)
@@ -511,6 +562,19 @@ def start_upload_material_service(workspace_id: str, user_id: str, file_name, co
         material_name=normalized_name,
         target=lambda: upload_material_service(workspace_id, user_id, file_name, content),
     )
+
+
+def cancel_material_service(workspace_id: str) -> MaterialActionResponse:
+    """Request cooperative cancellation of the workspace's in-flight job.
+
+    The running indexing loop checks the flag between batches and aborts,
+    rolling back any partial data. No active operation → nothing to cancel.
+    """
+    if not get_material_progress(workspace_id).active:
+        return MaterialActionResponse(ok=False, message="Сейчас нечего отменять.")
+
+    _request_cancel(workspace_id)
+    return MaterialActionResponse(ok=True, message="Отмена запрошена. Останавливаю операцию…")
 
 
 def delete_material_service(workspace_id: str, file_name):

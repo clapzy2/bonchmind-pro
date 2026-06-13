@@ -87,7 +87,7 @@ class WorkspaceAwareFakeKB:
         )
 
     # --- write paths ---
-    def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None):
+    def add_book(self, file_path, workspace_id=None, document_id=None, original_name=None, progress_callback=None, cancel_check=None):
         self._log(
             "add_book",
             file_path=file_path,
